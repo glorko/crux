@@ -1,0 +1,70 @@
+# Crux Configuration File Example
+# Local Development Only - Do not use in production
+#
+# Copy this file to config.yaml and customize for your project
+
+backend:
+  # Path to backend directory (relative to config.yaml or absolute)
+  path: "backend"
+  
+  # Start script (optional - for Go backends, crux will use 'go run' if not specified)
+  # For Python backends, specify a script like "run.sh" or "start.sh"
+  start_script: "run.sh"
+  
+  # Environment variables (optional - backend can also load from .env file)
+  env:
+    # DATABASE_URL: "postgresql://user:password@localhost:5432/dbname"
+    # REDIS_URL: "redis://localhost:6379"
+    # PORT: "8000"
+
+flutter:
+  # Base path for Flutter apps (relative to config.yaml or absolute)
+  path: "."
+  
+  # Flutter app instances
+  instances:
+    - name: "consumer"
+      device_id: "90266925-B62F-4741-A89E-EF11BFA0CC57"  # iOS Simulator ID
+      platform: "ios"
+      app_path: "flutter-consumer"  # Optional: subdirectory for this app
+    - name: "vendor"
+      device_id: "Pixel_9a"  # Android AVD name
+      platform: "android"
+      app_path: "flutter-vendor"  # Optional: subdirectory for this app
+
+# Web apps (Node.js, Vite, etc.)
+webapps:
+  instances:
+    - name: "admin"
+      path: "webapps/admin"  # Path to web app directory
+      start_script: "npm run dev"  # Command to start (npm, yarn, pnpm, etc.)
+      port: 5173  # Optional: for display purposes
+      env:  # Optional: environment variables
+        # VITE_API_URL: "http://localhost:8000"
+    - name: "vendor-web"
+      path: "webapps/vendor"
+      start_script: "yarn dev"
+      port: 5174
+
+# Dependencies validation
+dependencies:
+  postgres:
+    host: "localhost"
+    port: 5432
+    database: "mydb"
+    user: "postgres"
+    password: "postgres"
+    # Note: If DATABASE_URL is in backend/.env, it will override these values
+  
+  redis:
+    host: "localhost"
+    port: 6379
+    # Note: If REDIS_URL is in backend/.env, it will override these values
+  
+  s3:
+    # S3/MinIO configuration
+    endpoint: "http://localhost:9000"  # MinIO endpoint
+    access_key_id: "minioadmin"
+    secret_access_key: "minioadmin"
+    region: "us-east-1"
+    # Note: If MINIO_ENDPOINT_URL is in backend/.env, it will override these values

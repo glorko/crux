@@ -1,0 +1,40 @@
+# Binaries
+crux
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+testdata/mock_backend
+testdata/mock_flutter
+install-crux
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config files (if any)
+config.local.yaml
+
+# Build artifacts
+dist/
+build/

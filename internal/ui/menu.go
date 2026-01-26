@@ -6,10 +6,43 @@ import (
 	"os"
 	"strings"
 
+	"golang.org/x/term"
 	"github.com/glorko/crux/internal/flutter"
 	"github.com/glorko/crux/internal/process"
 	"github.com/glorko/crux/internal/webapp"
 )
+
+// readSingleChar reads a single character from stdin without requiring Enter
+func readSingleChar() (string, error) {
+	// Check if stdin is a terminal
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		// Fallback to scanner if not a terminal
+		return "", fmt.Errorf("not a terminal")
+	}
+
+	// Save current terminal state
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return "", err
+	}
+	defer term.Restore(fd, oldState)
+
+	// Read a single byte
+	var buf [1]byte
+	n, err := os.Stdin.Read(buf[:])
+	if err != nil || n == 0 {
+		return "", fmt.Errorf("failed to read input")
+	}
+
+	char := string(buf[0])
+	// Handle Enter key (newline or carriage return)
+	if char == "\n" || char == "\r" {
+		return "", fmt.Errorf("empty input")
+	}
+
+	return char, nil
+}
 
 // Menu handles interactive menu and runtime controls
 type Menu struct {
@@ -63,18 +96,26 @@ func (m *Menu) ShowStartupMenu() ([]string, error) {
 	fmt.Println("  [q] Quit")
 	fmt.Print("\nSelect option: ")
 
-	if !m.scanner.Scan() {
-		return nil, fmt.Errorf("failed to read input")
+	// Try to read single character without requiring Enter
+	input, err := readSingleChar()
+	if err != nil {
+		// Fallback to scanner if single char read fails (e.g., not a terminal)
+		if !m.scanner.Scan() {
+			return nil, fmt.Errorf("failed to read input")
+		}
+		input = strings.TrimSpace(m.scanner.Text())
+	} else {
+		// Echo the character and newline for better UX
+		fmt.Printf("%s\n", input)
 	}
-
-	input := strings.TrimSpace(m.scanner.Text())
+	
 	selected := []string{}
 
 	if input == "q" || input == "Q" {
 		return nil, nil
 	}
 
-	// Parse numeric input
+	// Parse numeric input (single digit)
 	var choice int
 	if _, err := fmt.Sscanf(input, "%d", &choice); err != nil {
 		return nil, fmt.Errorf("invalid option: %s", input)

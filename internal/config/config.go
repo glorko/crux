@@ -31,10 +31,11 @@ type FlutterConfig struct {
 
 // FlutterInstance represents a single Flutter app instance
 type FlutterInstance struct {
-	Name     string `yaml:"name"`
-	DeviceID string `yaml:"device_id"`
-	Platform string `yaml:"platform"`
-	AppPath  string `yaml:"app_path"` // Optional: subdirectory for Flutter app
+	Name        string `yaml:"name"`
+	DeviceID    string `yaml:"device_id"`     // Emulator ID (e.g., "emulator-5554") or iOS simulator ID
+	AVDName     string `yaml:"avd_name"`      // Optional: Android AVD name (e.g., "Pixel_9a") - required if device_id is emulator ID
+	Platform    string `yaml:"platform"`
+	AppPath     string `yaml:"app_path"`      // Optional: subdirectory for Flutter app
 }
 
 // WebAppsConfig contains web app configuration

@@ -81,6 +81,7 @@ func hasBinary(binary string) bool {
 
 // validatePostgres checks PostgreSQL connection
 // Tries to read DATABASE_URL from .env file first, then falls back to config.yaml
+// Always forces sslmode=disable for local development
 func validatePostgres(cfg *config.Config) error {
 	var connStr string
 	
@@ -92,6 +93,9 @@ func validatePostgres(cfg *config.Config) error {
 		// Fall back to config.yaml
 		connStr = cfg.GetPostgresConnectionString()
 	}
+
+	// Force sslmode=disable for local development (remove any existing sslmode param first)
+	connStr = ensureSSLModeDisabled(connStr)
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -107,6 +111,32 @@ func validatePostgres(cfg *config.Config) error {
 	}
 
 	return nil
+}
+
+// ensureSSLModeDisabled ensures sslmode=disable is set in the connection string
+// For local development, we never want SSL
+func ensureSSLModeDisabled(connStr string) string {
+	// Parse the URL
+	parsed, err := url.Parse(connStr)
+	if err != nil {
+		// If parsing fails, just append sslmode=disable
+		if strings.Contains(connStr, "?") {
+			return connStr + "&sslmode=disable"
+		}
+		return connStr + "?sslmode=disable"
+	}
+
+	// Remove any existing sslmode parameter
+	query := parsed.Query()
+	query.Del("sslmode")
+	query.Del("sslmode")
+	
+	// Set sslmode=disable
+	query.Set("sslmode", "disable")
+	
+	// Rebuild the URL
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 // validateRedis checks Redis connection using Go client

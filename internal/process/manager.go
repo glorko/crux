@@ -202,22 +202,14 @@ func (p *ManagedProcess) Stop() error {
 		p.Cancel()
 	}
 
-	// Wait for process to exit
+	// Kill process immediately (no graceful shutdown wait)
 	if p.Cmd != nil && p.Cmd.Process != nil {
-		// Give it a moment to exit gracefully
-		done := make(chan error, 1)
+		// Kill immediately - user wants fast shutdown
+		p.Cmd.Process.Kill()
+		// Wait briefly for process to die (non-blocking)
 		go func() {
-			done <- p.Cmd.Wait()
+			p.Cmd.Wait()
 		}()
-
-		select {
-		case <-done:
-			// Process exited
-		case <-time.After(5 * time.Second):
-			// Force kill
-			p.Cmd.Process.Kill()
-			<-done
-		}
 	}
 
 	if p.Stdout != nil {

@@ -1,0 +1,31 @@
+# Crux Configuration File
+# Local Development Only - Do not use in production
+
+backend:
+  path: "../crucially-backend"
+  start_script: "start-backend.sh"
+  env:
+    DATABASE_URL: "postgres://postgres:postgres@localhost:5433/crucially?sslmode=disable"
+    REDIS_URL: "redis://localhost:6379"
+    PORT: "50051"
+
+flutter:
+  path: "../crucially-mobile"
+  instances:
+    - name: "app1"
+      device_id: "00008101-001E305C2E33A01E"  # iOS device
+      platform: "ios"
+    - name: "app2"
+      device_id: "emulator-5554"  # Android emulator
+      platform: "android"
+
+dependencies:
+  postgres:
+    host: "localhost"
+    port: 5433
+    database: "crucially"
+    user: "postgres"
+    password: "postgres"
+  redis:
+    host: "localhost"
+    port: 6379

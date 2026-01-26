@@ -18,7 +18,7 @@ Crux is a Go-based CLI tool to orchestrate your local development environment. I
 
 ## Supported Technologies
 
-### ✅ Fully Supported
+### ✅ Supported
 
 #### Backend Languages
 - **Go** - Automatic detection, uses `go run` or custom start script, rebuilds on restart
@@ -418,7 +418,7 @@ crux --version
 
 ## License
 
-Local development tool - use at your own risk.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Contributing
 

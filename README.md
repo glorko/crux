@@ -1,18 +1,36 @@
-# Crux - Dev Environment Orchestrator
+# Crux - AI-Native Dev Environment Orchestrator
 
-**Local Development Only** - Orchestrates your dev services in native terminal tabs.
+**For agentic engineers and vibe coders** - One command to rule your local dev stack.
 
-> **Tested on macOS** - May work on Linux (Wezterm is cross-platform). Windows might work with WSL/Git Bash + Wezterm (untested, may need minor changes for window activation).
+## The Dream
 
-Crux spawns each service in its own terminal tab, giving you full interactive control (Ctrl+C, logs, commands) while managing everything from a single config file.
+1. Install crux
+2. Tell your AI: *"Set up crux for this project"*
+3. Run `crux`
+4. Your multi-repo app is running with all services, databases, and emulators
+
+**That's it.** Your AI reads the project, generates `config.yaml`, and crux handles the rest.
+
+## Reality Check
+
+This works great for many setups, but if something doesn't work for your architecture:
+- **Create an issue** - [github.com/glorko/crux/issues](https://github.com/glorko/crux/issues)
+- **Ping me directly** - More architectures and platforms coming soon
+
+> **Tested on macOS** - May work on Linux (Wezterm is cross-platform). Windows might work with WSL/Git Bash + Wezterm (untested).
+
+## What Crux Does
+
+Crux spawns each service in its own terminal tab, giving you full interactive control (Ctrl+C, logs, commands) while managing everything from a single config file. AI agents can monitor and control services via MCP.
 
 ## Features
 
-- **Native Terminal Tabs** - Each service runs in its own tab (Wezterm, Kitty, or tmux)
+- **AI-Native** - Built for LLM agents to configure and control via MCP
+- **Native Terminal Tabs** - Each service runs in its own Wezterm tab
 - **One Command Launch** - `crux` reads config.yaml and starts everything
-- **Interactive Control** - Full terminal access to each service
-- **MCP Integration** - Control services via AI assistants (Cursor, etc.)
-- **Hot Reload/Restart** - Send commands to services via API
+- **Dependency Management** - Auto-start databases, emulators before services
+- **Crash Recovery** - Logs persisted, tabs stay open on failure
+- **Interactive Control** - Full terminal access, hot reload, keyboard input
 
 ## Requirements
 

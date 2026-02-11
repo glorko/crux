@@ -2,6 +2,8 @@
 
 **Local Development Only** - Orchestrates your dev services in native terminal tabs.
 
+> **macOS only** - Linux/Windows support not yet implemented.
+
 Crux spawns each service in its own terminal tab, giving you full interactive control (Ctrl+C, logs, commands) while managing everything from a single config file.
 
 ## Features

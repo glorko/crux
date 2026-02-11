@@ -361,6 +361,8 @@ func printAgentPrompt() {
 
 I want you to set up and run my development environment using crux.
 
+NOTE: crux currently supports macOS only.
+
 ## Step 1: Verify crux is installed
 Run: crux --help
 If not found, tell the user to install crux:

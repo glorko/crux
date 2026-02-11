@@ -361,7 +361,7 @@ func printAgentPrompt() {
 
 I want you to set up and run my development environment using crux.
 
-NOTE: crux currently supports macOS only.
+NOTE: crux is tested on macOS. May work on Linux (Wezterm is cross-platform).
 
 ## Step 1: Verify crux is installed
 Run: crux --help

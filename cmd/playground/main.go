@@ -82,9 +82,28 @@ terminal:
 
 	// Validate service commands exist
 	for _, svc := range cfg.Services {
-		if _, err := os.Stat(svc.Command); os.IsNotExist(err) {
-			fmt.Printf("❌ Command not found: %s\n", svc.Command)
-			os.Exit(1)
+		cmdPath := svc.Command
+		
+		// If command is a relative path (./something), resolve relative to workdir
+		if strings.HasPrefix(cmdPath, "./") || strings.HasPrefix(cmdPath, "../") {
+			if svc.WorkDir != "" {
+				cmdPath = filepath.Join(svc.WorkDir, svc.Command)
+			}
+		}
+		
+		// Check if it's a file path
+		if strings.Contains(cmdPath, "/") {
+			if _, err := os.Stat(cmdPath); os.IsNotExist(err) {
+				fmt.Printf("❌ Command not found: %s\n", cmdPath)
+				fmt.Printf("   (workdir: %s)\n", svc.WorkDir)
+				os.Exit(1)
+			}
+		} else {
+			// It's a binary name - check if it's in PATH
+			if _, err := exec.LookPath(cmdPath); err != nil {
+				fmt.Printf("❌ Command not found in PATH: %s\n", cmdPath)
+				os.Exit(1)
+			}
 		}
 	}
 

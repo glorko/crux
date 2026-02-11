@@ -107,14 +107,38 @@ func (fr *FlutterRunner) StartInstance(ctx context.Context, name string) error {
 
 	// Update instance handler
 	fr.instances[name].Handler = proc
+	
+	// Wait for Flutter app to actually be ready (not just process started)
+	// Look for "Flutter run key commands" or "A Dart VM Service" in output
+	if err := fr.waitForFlutterReady(ctx, proc, name); err != nil {
+		// Don't fail completely - process is running, just not fully ready yet
+		// User will see it in the logs
+		fmt.Printf("⚠️  Flutter %s started but may still be launching...\n", name)
+	}
+	
 	return nil
 }
 
 // StopInstance stops a Flutter app instance
+// If keepEmulatorsRunning is true and this is an emulator, skips stopping (leaves emulator running)
 func (fr *FlutterRunner) StopInstance(name string) error {
 	instance, exists := fr.instances[name]
 	if !exists {
 		return fmt.Errorf("Flutter instance %s not found", name)
+	}
+
+	// Check if we should keep emulators running
+	if fr.config.Flutter.GetKeepEmulatorsRunning() {
+		// Check if this is an emulator (Android emulator or iOS simulator)
+		isEmulator := (instance.Platform == "android" && strings.HasPrefix(instance.DeviceID, "emulator-")) ||
+			(instance.Platform == "android" && instance.AVDName != "") ||
+			(instance.Platform == "ios")
+		
+		if isEmulator {
+			// Don't stop - leave emulator/simulator running
+			fmt.Printf("📱 Leaving %s emulator/simulator running (keep_emulators_running=true)\n", instance.Platform)
+			return nil
+		}
 	}
 
 	return fr.manager.StopProcess(instance.ProcID)
@@ -398,4 +422,69 @@ func (fr *FlutterRunner) generateProtobuf(flutterPath string) error {
 	}
 
 	return nil // No proto files to generate
+}
+
+// waitForFlutterReady waits for Flutter app to be actually ready
+// For Android: waits for Gradle build to complete, then app launch
+// For iOS: waits for Xcode build to complete, then app launch
+func (fr *FlutterRunner) waitForFlutterReady(ctx context.Context, proc *process.ManagedProcess, name string) error {
+	maxWait := 120 * time.Second // Max 2 minutes (Gradle can be slow)
+	checkInterval := 500 * time.Millisecond
+	startTime := time.Now()
+	
+	// Track what we've seen
+	gradleComplete := false
+	appLaunched := false
+	
+	for time.Since(startTime) < maxWait {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		
+		// Check process output for readiness indicators
+		output := proc.GetOutput()
+		outputStr := strings.Join(output, "\n")
+		
+		// For Android: Check for Gradle build completion
+		if strings.Contains(outputStr, "BUILD SUCCESSFUL") ||
+			strings.Contains(outputStr, "Built ") ||
+			strings.Contains(outputStr, "Installing") {
+			gradleComplete = true
+		}
+		
+		// Check for app launch indicators (works for both iOS and Android)
+		if strings.Contains(outputStr, "Flutter run key commands") ||
+			strings.Contains(outputStr, "A Dart VM Service") ||
+			strings.Contains(outputStr, "Syncing files to device") {
+			appLaunched = true
+		}
+		
+		// For iOS: Xcode build completion
+		if strings.Contains(outputStr, "Xcode build done") {
+			gradleComplete = true // Treat as build complete
+		}
+		
+		// If we see app launch indicators, we're ready
+		if appLaunched {
+			// Give it a moment more to fully stabilize
+			time.Sleep(1 * time.Second)
+			return nil
+		}
+		
+		// For Android, if Gradle is done but app not launched yet, wait a bit more
+		if gradleComplete && !appLaunched {
+			// Gradle done, app should launch soon - wait up to 30 more seconds
+			if time.Since(startTime) > 90*time.Second {
+				// Been waiting too long after Gradle - probably ready anyway
+				return nil
+			}
+		}
+		
+		time.Sleep(checkInterval)
+	}
+	
+	// Timeout - but don't fail, process is running
+	return fmt.Errorf("timeout waiting for Flutter app to be ready")
 }

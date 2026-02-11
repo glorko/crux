@@ -1,0 +1,28 @@
+# Crux Configuration
+# Terminal-based service orchestrator
+
+services:
+  - name: backend
+    command: crux-backend-mock
+    args: ["backend", "50051"]
+    
+  - name: flutter-ios
+    command: crux-flutter-mock
+    args: ["flutter-ios", "iPhone 15 Pro"]
+    
+  - name: flutter-android
+    command: crux-flutter-mock
+    args: ["flutter-android", "Pixel 9a"]
+
+# Terminal app to use for tabs
+# Options: wezterm (best), kitty, tmux (fallback with ghostty/iterm2/terminal)
+terminal:
+  app: wezterm
+
+# Only used if terminal.app is tmux
+tmux:
+  session_name: crux
+
+# API server for MCP integration
+api:
+  port: 9876

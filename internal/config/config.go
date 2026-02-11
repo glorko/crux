@@ -25,8 +25,17 @@ type BackendConfig struct {
 
 // FlutterConfig contains Flutter-specific configuration
 type FlutterConfig struct {
-	Path      string           `yaml:"path"`
-	Instances []FlutterInstance `yaml:"instances"`
+	Path                 string            `yaml:"path"`
+	Instances            []FlutterInstance  `yaml:"instances"`
+	KeepEmulatorsRunning *bool             `yaml:"keep_emulators_running"` // Default: true - don't stop emulators on exit (nil = use default)
+}
+
+// GetKeepEmulatorsRunning returns the value, defaulting to true if not set
+func (fc *FlutterConfig) GetKeepEmulatorsRunning() bool {
+	if fc.KeepEmulatorsRunning == nil {
+		return true // Default: keep emulators running
+	}
+	return *fc.KeepEmulatorsRunning
 }
 
 // FlutterInstance represents a single Flutter app instance

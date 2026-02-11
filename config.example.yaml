@@ -21,6 +21,10 @@ flutter:
   # Base path for Flutter apps (relative to config.yaml or absolute)
   path: "."
   
+  # Keep emulators/simulators running on exit (default: true)
+  # Set to false if you want emulators to be stopped when crux exits
+  keep_emulators_running: true
+  
   # Flutter app instances
   instances:
     - name: "consumer"

@@ -15,7 +15,9 @@
 
 This works great for many setups, but if something doesn't work for your architecture:
 - **Create an issue** - [github.com/glorko/crux/issues](https://github.com/glorko/crux/issues)
-- **Ping me directly** - More architectures and platforms coming soon
+- **Ping me directly** - [t.me/glorfindeil](https://t.me/glorfindeil)
+
+More architectures and platforms coming soon!
 
 > **Tested on macOS** - May work on Linux (Wezterm is cross-platform). Windows might work with WSL/Git Bash + Wezterm (untested).
 
@@ -176,7 +178,21 @@ crux --config=config.e2e.yaml
 
 ## Dependencies
 
-Crux can automatically check and start dependencies (databases, emulators, etc.) before running your services.
+Crux can automatically check and start dependencies before running your services. **Any dependency works** - the pattern is simple:
+
+- `check` - Command that exits 0 if dependency is ready
+- `start` - Command to run if check fails
+- `timeout` - How long to wait for it to become ready
+
+```yaml
+dependencies:
+  - name: my-dependency
+    check: some-command-that-exits-0-if-ready
+    start: command-to-start-it
+    timeout: 30
+```
+
+### Common Examples
 
 ```yaml
 dependencies:
@@ -200,7 +216,7 @@ dependencies:
 
   # MinIO via Docker
   - name: minio
-    check: curl -s http://localhost:9000/minio/health/live
+    check: curl -sf http://localhost:9000/minio/health/live >/dev/null
     start: docker run -d --name crux-minio -p 9000:9000 -p 9001:9001 minio/minio server /data --console-address ":9001"
     timeout: 20
 
@@ -210,22 +226,20 @@ dependencies:
     start: open -a Simulator
     timeout: 60
 
-  # Android Emulator (replace Pixel_7_API_34 with your AVD name)
-  # Note: nohup is required so emulator survives terminal close
+  # Android Emulator (nohup + sh -c so it survives terminal close)
   - name: android-emulator
     check: adb devices | grep -q emulator
-    start: nohup emulator -avd Pixel_7_API_34 > /dev/null 2>&1 &
+    start: sh -c 'nohup emulator -avd YOUR_AVD_NAME > /tmp/crux-emulator.log 2>&1 &'
     timeout: 120
 
-services:
-  # ... your services run after all dependencies are ready
+  # Any custom service
+  - name: my-custom-api
+    check: curl -sf http://localhost:8080/health
+    start: docker-compose up -d my-api
+    timeout: 45
 ```
 
-Each dependency has:
-- `name` - Display name
-- `check` - Command to verify it's running (exit 0 = running)
-- `start` - Command to start if not running (optional)
-- `timeout` - Seconds to wait after starting (default: 30)
+**The pattern works for anything** - Docker containers, brew services, emulators, custom scripts. If you can write a check command and a start command, crux can manage it.
 
 When you run `crux`:
 1. Each dependency's `check` is run
@@ -308,7 +322,13 @@ Opens Ghostty/iTerm2/Terminal with tmux attached. Keybindings:
 
 ## MCP Server (AI/LLM Integration)
 
-Control crux services via AI assistants like Cursor. The MCP server communicates directly with Wezterm's CLI to manage terminal tabs.
+**Your AI can see everything.** Ask Cursor/Claude about what's happening in your running services - it has full access to terminal output, logs, and can send commands.
+
+The MCP server lets AI assistants:
+- **Read live logs** from any running terminal tab
+- **See crash logs** even after a tab closes
+- **Send commands** like hot reload (`r`), restart (`R`), or any keystroke
+- **Monitor status** of all services
 
 > **Note:** See [Installation](#installation) for setup instructions.
 

@@ -5,11 +5,12 @@
 ## The Dream
 
 1. Install crux
-2. Tell your AI: *"Set up crux for this project"*
-3. Run `crux`
-4. Your multi-repo app is running with all services, databases, and emulators
+2. Run `crux --prompt` and paste the output to your AI
+3. AI analyzes your project and generates `config.yaml`
+4. Run `crux`
+5. Your multi-repo app is running with all services, databases, and emulators
 
-**That's it.** Your AI reads the project, generates `config.yaml`, and crux handles the rest.
+**That's it.** The prompt teaches your AI how crux works, it reads your project, generates the config, and crux handles the rest.
 
 ## Reality Check
 

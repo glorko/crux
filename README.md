@@ -2,7 +2,7 @@
 
 **Local Development Only** - Orchestrates your dev services in native terminal tabs.
 
-> **Tested on macOS only** - May work on Linux (Wezterm is cross-platform), not tested on Windows.
+> **Tested on macOS** - May work on Linux (Wezterm is cross-platform). Windows might work with WSL/Git Bash + Wezterm (untested, may need minor changes for window activation).
 
 Crux spawns each service in its own terminal tab, giving you full interactive control (Ctrl+C, logs, commands) while managing everything from a single config file.
 

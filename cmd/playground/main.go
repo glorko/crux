@@ -425,10 +425,10 @@ Look at the project structure to identify:
 - Web apps (React, Vue, etc.)
 - Existing run scripts (run.sh, Makefile, package.json scripts)
 
-## Step 3a: Configure dependencies (databases, emulators)
-Crux can auto-start dependencies before services. Add to config.yaml:
+## Step 3a: Backend infrastructure dependencies
+Check if project needs databases/caches. Ask user: "Are postgres/redis/mongo already running, or should crux start them?"
 
-dependencies:
+If crux should manage them, add to dependencies:
   - name: postgres
     check: pg_isready -h localhost -p 5432
     start: docker run -d --name crux-postgres -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:15
@@ -437,37 +437,31 @@ dependencies:
     check: redis-cli ping
     start: docker run -d --name crux-redis -p 6379:6379 redis:7
     timeout: 15
-  - name: mongo
-    check: mongosh --eval "db.runCommand('ping')" --quiet
-    start: docker run -d --name crux-mongo -p 27017:27017 mongo:7
-    timeout: 30
 
-For emulators:
+## Step 3b: Mobile app dependencies (REQUIRED if project has mobile apps)
+IMPORTANT: If project contains Flutter, React Native, iOS, or Android apps, you MUST add emulator dependencies.
+
+For iOS apps - add this dependency:
   - name: ios-simulator
     check: xcrun simctl list devices | grep -q Booted
     start: open -a Simulator
     timeout: 60
+
+For Android apps - first find AVD name with: emulator -list-avds
+Then add this dependency (replace YOUR_AVD_NAME):
   - name: android-emulator
     check: adb devices | grep -q emulator
     start: emulator -avd YOUR_AVD_NAME &
     timeout: 120
 
-Ask user: "Should crux manage your dependencies (postgres, redis, etc.) or are they already running?"
-
-## Step 3b: For mobile projects, detect available devices
-If Flutter/React Native/mobile projects found:
-
-For iOS simulators, run: xcrun simctl list devices available
-- Look for "Booted" or available simulators
+## Step 3c: Get device IDs for mobile services
+For iOS: run "xcrun simctl list devices available"
 - Use the UUID (e.g., "90266925-B62F-4741-A89E-EF11BFA0CC57")
-- If none available, tell user: "No iOS simulators found. Create one in Xcode > Window > Devices and Simulators"
+- If no simulators, tell user to create one in Xcode
 
-For Android emulators, run: emulator -list-avds
-- If AVDs exist, tell user to start one: "emulator -avd AVD_NAME &"
-- Then get the device ID with: flutter devices (look for "emulator-5554" or similar)
-- If no AVDs, tell user: "No Android emulators found. Create one in Android Studio > Device Manager"
-
-Use the actual device IDs in config.yaml, not device names.
+For Android: run "flutter devices" (after emulator starts)
+- Use the device ID (e.g., "emulator-5554")
+- If no emulators, tell user to create AVD in Android Studio
 
 ## Step 4: Create config.yaml
 Create a config.yaml in the project root with:

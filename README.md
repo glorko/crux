@@ -193,9 +193,10 @@ dependencies:
     timeout: 60
 
   # Android Emulator (replace Pixel_7_API_34 with your AVD name)
+  # Note: nohup is required so emulator survives terminal close
   - name: android-emulator
     check: adb devices | grep -q emulator
-    start: emulator -avd Pixel_7_API_34 &
+    start: nohup emulator -avd Pixel_7_API_34 > /dev/null 2>&1 &
     timeout: 120
 
 services:

@@ -468,7 +468,7 @@ For Android apps - first find AVD name with: emulator -list-avds
 Then add this dependency (replace YOUR_AVD_NAME):
   - name: android-emulator
     check: adb devices | grep -q emulator
-    start: emulator -avd YOUR_AVD_NAME &
+    start: nohup emulator -avd YOUR_AVD_NAME > /dev/null 2>&1 &
     timeout: 120
 
 ## Step 3c: Get device IDs for mobile services
@@ -685,7 +685,7 @@ dependencies:
   # Android Emulator (uncomment and set your AVD name)
   # - name: android-emulator
   #   check: adb devices | grep -q emulator
-  #   start: emulator -avd Pixel_7_API_34 &
+  #   start: nohup emulator -avd Pixel_7_API_34 > /dev/null 2>&1 &
   #   timeout: 120
 
 services:

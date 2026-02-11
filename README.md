@@ -29,6 +29,7 @@ Crux spawns each service in its own terminal tab, giving you full interactive co
 ### Other Requirements
 
 - **Go 1.21+** - For building crux
+- **Docker** - For running dependencies (postgres, redis, mongo, etc.)
 - **Your services** - Backend, Flutter, web apps, etc.
 
 ## Installation
@@ -133,10 +134,85 @@ terminal:
 2. Run crux:
 
 ```bash
-crux
+crux                        # Uses config.yaml
+crux -c config.test.yaml    # Use different config
 ```
 
-3. A Wezterm window opens with 3 tabs - one for each service!
+3. A Wezterm window opens with tabs - one for each service!
+
+### Multiple Configurations
+
+You can have different configs for different scenarios:
+
+```bash
+config.yaml           # Default dev setup
+config.test.yaml      # For running tests
+config.minimal.yaml   # Just backend, no Flutter
+```
+
+```bash
+crux                        # Uses config.yaml
+crux -c config.test.yaml    # Uses test config
+crux --config=config.e2e.yaml
+```
+
+## Dependencies
+
+Crux can automatically check and start dependencies (databases, emulators, etc.) before running your services.
+
+```yaml
+dependencies:
+  # PostgreSQL via Docker
+  - name: postgres
+    check: pg_isready -h localhost -p 5432
+    start: docker run -d --name crux-postgres -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:15
+    timeout: 30
+
+  # Redis via Docker
+  - name: redis
+    check: redis-cli ping
+    start: docker run -d --name crux-redis -p 6379:6379 redis:7
+    timeout: 15
+
+  # MongoDB via Docker
+  - name: mongo
+    check: mongosh --eval "db.runCommand('ping')" --quiet
+    start: docker run -d --name crux-mongo -p 27017:27017 mongo:7
+    timeout: 30
+
+  # MinIO via Docker
+  - name: minio
+    check: curl -s http://localhost:9000/minio/health/live
+    start: docker run -d --name crux-minio -p 9000:9000 -p 9001:9001 minio/minio server /data --console-address ":9001"
+    timeout: 20
+
+  # iOS Simulator
+  - name: ios-simulator
+    check: xcrun simctl list devices | grep -q Booted
+    start: open -a Simulator
+    timeout: 60
+
+  # Android Emulator (replace Pixel_7_API_34 with your AVD name)
+  - name: android-emulator
+    check: adb devices | grep -q emulator
+    start: emulator -avd Pixel_7_API_34 &
+    timeout: 120
+
+services:
+  # ... your services run after all dependencies are ready
+```
+
+Each dependency has:
+- `name` - Display name
+- `check` - Command to verify it's running (exit 0 = running)
+- `start` - Command to start if not running (optional)
+- `timeout` - Seconds to wait after starting (default: 30)
+
+When you run `crux`:
+1. Each dependency's `check` is run
+2. If check fails and `start` is provided, it runs the start command
+3. Polls `check` until it passes or timeout expires
+4. Once all pass → services start! 🎉
 
 ## Configuration
 
@@ -225,6 +301,7 @@ Control crux services via AI assistants like Cursor. The MCP server communicates
 | `crux_send` | Send text/commands to a tab (e.g., `r` for hot reload, `R` for restart, `q` for quit) |
 | `crux_logs` | Get terminal scrollback from a tab (last N lines) |
 | `crux_focus` | Focus/activate a specific tab in Wezterm |
+| `crux_logfile` | Read log files for crashed/closed tabs. Each run creates timestamped log in `/tmp/crux-logs/<service>/` |
 
 ### Tool Parameters
 
@@ -239,14 +316,57 @@ Control crux services via AI assistants like Cursor. The MCP server communicates
 **crux_focus**
 - `tab` - Tab number or partial title match
 
+**crux_logfile**
+- `service` - Service name (e.g., "backend") or "list" to show all services with logs
+- `run` - Which run: "latest" (default), "list" to show all runs, or timestamp like "2024-02-11_143022"
+- `lines` - Number of lines to read from end (default: 100)
+
+### crux_logs vs crux_logfile
+
+| Tool | When to Use |
+|------|-------------|
+| `crux_logs` | Tab is still **running** - reads live terminal scrollback |
+| `crux_logfile` | Tab **crashed/closed** - reads persistent log file from /tmp |
+
+### Log Files
+
+All service output is automatically logged to `/tmp/crux-logs/<service>/<timestamp>.log`:
+
+```
+/tmp/crux-logs/
+├── backend/
+│   ├── 2024-02-11_143022.log
+│   ├── 2024-02-11_150105.log
+│   └── latest.log -> 2024-02-11_150105.log
+└── flutter-ios/
+    ├── 2024-02-11_143025.log
+    └── latest.log -> 2024-02-11_143025.log
+```
+
+Features:
+1. **Run History** - Each `crux` run creates a new timestamped log (keeps last 10)
+2. **Crash Recovery** - If a tab dies, you can still read the logs
+3. **Quick Access** - `latest.log` symlink always points to most recent run
+4. **Failed Startup** - Tab stays open with error message until Enter is pressed
+
+When a service fails:
+```
+⚠️  Command failed! Log saved to: /tmp/crux-logs/backend/2024-02-11_143022.log
+Press Enter to close this tab...
+```
+
 ### Usage Examples
 
 Ask Cursor:
 - "What services are running?" (uses crux_status)
 - "Hot reload Flutter" (sends "r" to flutter tab)
 - "Hot restart the consumer app" (sends "R")
-- "Show me the backend logs" (uses crux_logs)
+- "Show me the backend logs" (uses crux_logs for live output)
 - "Focus the backend tab" (activates tab in Wezterm)
+- "The backend crashed, what happened?" (uses crux_logfile for crash logs)
+- "What services have logs?" (crux_logfile with service="list")
+- "Show me previous backend runs" (crux_logfile with service="backend", run="list")
+- "Read the run from this morning" (crux_logfile with run="2024-02-11_090000")
 
 ## Architecture
 

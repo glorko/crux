@@ -38,9 +38,71 @@ func (w *WeztermLauncher) Spawn(name string, workDir string, command string, arg
 	return err
 }
 
+// wrapCommand wraps a command to log output and keep terminal open on failure
+// Logs to /tmp/crux-logs/<service>/<timestamp>.log with symlink to latest.log
+func wrapCommand(name string, command string, args []string) (string, []string) {
+	// Build the original command string
+	fullCmd := command
+	for _, arg := range args {
+		// Quote args with spaces
+		if strings.Contains(arg, " ") {
+			fullCmd += fmt.Sprintf(" '%s'", arg)
+		} else {
+			fullCmd += " " + arg
+		}
+	}
+	
+	// Log directory structure: /tmp/crux-logs/<service>/
+	logDir := fmt.Sprintf("/tmp/crux-logs/%s", name)
+	
+	// Wrapper script:
+	// 1. Create log directory
+	// 2. Create timestamped log file
+	// 3. Symlink latest.log to current log
+	// 4. Clean up old logs (keep last 10)
+	// 5. Run command with tee
+	// 6. Keep open on failure
+	wrapper := fmt.Sprintf(`
+# Setup logging
+LOG_DIR="%s"
+mkdir -p "$LOG_DIR"
+TIMESTAMP=$(date +%%Y-%%m-%%d_%%H%%M%%S)
+LOG_FILE="$LOG_DIR/$TIMESTAMP.log"
+
+# Symlink latest.log
+rm -f "$LOG_DIR/latest.log"
+ln -s "$LOG_FILE" "$LOG_DIR/latest.log"
+
+# Clean old logs (keep last 10)
+ls -t "$LOG_DIR"/*.log 2>/dev/null | grep -v latest.log | tail -n +11 | xargs rm -f 2>/dev/null
+
+# Run with logging
+echo "=== crux: %s ===" | tee "$LOG_FILE"
+echo "Command: %s" | tee -a "$LOG_FILE"
+echo "Started: $(date)" | tee -a "$LOG_FILE"
+echo "Log: $LOG_FILE" | tee -a "$LOG_FILE"
+echo "================================" | tee -a "$LOG_FILE"
+%s 2>&1 | tee -a "$LOG_FILE"
+EXIT_CODE=${PIPESTATUS[0]}
+echo "" | tee -a "$LOG_FILE"
+echo "=== Exited with code $EXIT_CODE at $(date) ===" | tee -a "$LOG_FILE"
+if [ $EXIT_CODE -ne 0 ]; then
+  echo ""
+  echo "⚠️  Command failed! Log saved to: $LOG_FILE"
+  echo "Press Enter to close this tab..."
+  read
+fi
+`, logDir, name, fullCmd, fullCmd)
+	
+	return "/bin/bash", []string{"-c", wrapper}
+}
+
 // OpenWindow opens a new Wezterm window with a command
 // Uses 'wezterm start' which launches the GUI
 func (w *WeztermLauncher) OpenWindow(title string, workDir string, command string, args []string) (string, error) {
+	// Wrap command to log and keep open on failure
+	wrappedCmd, wrappedArgs := wrapCommand(title, command, args)
+	
 	cmdArgs := []string{"start"}
 	
 	if workDir != "" {
@@ -48,8 +110,8 @@ func (w *WeztermLauncher) OpenWindow(title string, workDir string, command strin
 	}
 	
 	cmdArgs = append(cmdArgs, "--")
-	cmdArgs = append(cmdArgs, command)
-	cmdArgs = append(cmdArgs, args...)
+	cmdArgs = append(cmdArgs, wrappedCmd)
+	cmdArgs = append(cmdArgs, wrappedArgs...)
 
 	cmd := exec.Command("wezterm", cmdArgs...)
 	err := cmd.Start()
@@ -100,6 +162,9 @@ func extractFirstPaneID(jsonOutput string) string {
 
 // SpawnTab spawns a new tab in the existing Wezterm window
 func (w *WeztermLauncher) SpawnTab(title string, workDir string, command string, args []string) (string, error) {
+	// Wrap command to log and keep open on failure
+	wrappedCmd, wrappedArgs := wrapCommand(title, command, args)
+	
 	cmdArgs := []string{"cli", "spawn"}
 	
 	// Must specify --pane-id when running from outside Wezterm
@@ -112,8 +177,8 @@ func (w *WeztermLauncher) SpawnTab(title string, workDir string, command string,
 	}
 	
 	cmdArgs = append(cmdArgs, "--")
-	cmdArgs = append(cmdArgs, command)
-	cmdArgs = append(cmdArgs, args...)
+	cmdArgs = append(cmdArgs, wrappedCmd)
+	cmdArgs = append(cmdArgs, wrappedArgs...)
 
 	// Retry logic - wezterm might not be fully ready
 	var lastErr error

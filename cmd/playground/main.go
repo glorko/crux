@@ -34,9 +34,13 @@ func (w *Worker) SendCommand(cmd string) error {
 }
 
 func main() {
+	// Parse config file path from args
+	configPath := "config.yaml"
+	args := os.Args[1:]
+	
 	// Handle CLI flags
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "-h", "--help", "help":
 			printHelp()
 			return
@@ -49,6 +53,21 @@ func main() {
 		case "prompt", "--prompt":
 			printAgentPrompt()
 			return
+		case "-c", "--config":
+			if i+1 < len(args) {
+				configPath = args[i+1]
+				i++ // skip next arg
+			} else {
+				fmt.Println("❌ --config requires a file path")
+				os.Exit(1)
+			}
+		default:
+			// Check if it's -c=path or --config=path format
+			if strings.HasPrefix(args[i], "-c=") {
+				configPath = strings.TrimPrefix(args[i], "-c=")
+			} else if strings.HasPrefix(args[i], "--config=") {
+				configPath = strings.TrimPrefix(args[i], "--config=")
+			}
 		}
 	}
 
@@ -57,28 +76,29 @@ func main() {
 	fmt.Println("╚════════════════════════════════════════════════╝")
 	fmt.Println()
 
-	// Load config from current directory
-	cfg, err := LoadPlaygroundConfig()
+	// Load config
+	cfg, err := LoadPlaygroundConfig(configPath)
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
 		fmt.Println()
-		fmt.Println("Create a config.yaml in the current directory with:")
-		fmt.Println(`
-services:
-  - name: backend
-    command: crux-backend-mock
-    args: ["backend", "50051"]
-  - name: flutter-ios
-    command: crux-flutter-mock
-    args: ["flutter-ios", "iPhone 15 Pro"]
-
-terminal:
-  app: wezterm  # Options: wezterm, kitty, tmux
-`)
+		fmt.Printf("Create %s or run: crux init\n", configPath)
+		fmt.Println()
+		fmt.Println("Or specify a different config: crux -c config.test.yaml")
 		os.Exit(1)
 	}
 
-	fmt.Printf("✅ Loaded config.yaml (%d services)\n", len(cfg.Services))
+	fmt.Printf("✅ Loaded %s (%d services", configPath, len(cfg.Services))
+	if len(cfg.Dependencies) > 0 {
+		fmt.Printf(", %d dependencies", len(cfg.Dependencies))
+	}
+	fmt.Println(")")
+	fmt.Println()
+
+	// Check and start dependencies first
+	if err := cfg.CheckDependencies(); err != nil {
+		fmt.Printf("%v\n", err)
+		os.Exit(1)
+	}
 
 	// Validate service commands exist
 	for _, svc := range cfg.Services {
@@ -405,20 +425,34 @@ Look at the project structure to identify:
 - Web apps (React, Vue, etc.)
 - Existing run scripts (run.sh, Makefile, package.json scripts)
 
-## Step 3a: Check if dependencies are already running
-Before adding Docker/database services to config, check if they're already running:
+## Step 3a: Configure dependencies (databases, emulators)
+Crux can auto-start dependencies before services. Add to config.yaml:
 
-For PostgreSQL: pg_isready -h localhost -p 5432
-For Redis: redis-cli ping
-For Docker services: docker ps
+dependencies:
+  - name: postgres
+    check: pg_isready -h localhost -p 5432
+    start: docker run -d --name crux-postgres -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:15
+    timeout: 30
+  - name: redis
+    check: redis-cli ping
+    start: docker run -d --name crux-redis -p 6379:6379 redis:7
+    timeout: 15
+  - name: mongo
+    check: mongosh --eval "db.runCommand('ping')" --quiet
+    start: docker run -d --name crux-mongo -p 27017:27017 mongo:7
+    timeout: 30
 
-If services are already running locally, do NOT add them to crux config.
-Only add docker/infrastructure commands if:
-1. Services are not running AND
-2. Project has docker-compose.yml or similar AND
-3. User confirms they want crux to manage infrastructure
+For emulators:
+  - name: ios-simulator
+    check: xcrun simctl list devices | grep -q Booted
+    start: open -a Simulator
+    timeout: 60
+  - name: android-emulator
+    check: adb devices | grep -q emulator
+    start: emulator -avd YOUR_AVD_NAME &
+    timeout: 120
 
-Ask user: "I see PostgreSQL/Redis/etc in your project. Are these already running locally, or should crux start them?"
+Ask user: "Should crux manage your dependencies (postgres, redis, etc.) or are they already running?"
 
 ## Step 3b: For mobile projects, detect available devices
 If Flutter/React Native/mobile projects found:
@@ -451,15 +485,45 @@ This opens Wezterm with all services in separate tabs.
 
 ## Step 6: Use MCP to control services
 Once running, you can use these MCP tools:
-- crux_status: List all tabs
-- crux_send: Send commands (r=reload, R=restart, q=quit)
-- crux_logs: Get terminal output
-- crux_focus: Focus a tab
+
+crux_status
+  - No parameters
+  - Returns: List of all tabs with numbers and titles
+
+crux_send
+  - tab: Tab number (1,2,3...) or partial name ("backend", "flutter")
+  - text: Command to send ("r"=reload, "R"=restart, "q"=quit, or any text)
+
+crux_logs
+  - tab: Tab number or partial name
+  - lines: Number of lines to get (default: 50)
+  - Returns: Live terminal scrollback from the running tab
+
+crux_focus
+  - tab: Tab number or partial name
+  - Action: Brings that tab to front in Wezterm
+
+crux_logfile
+  - service: Service name ("backend") or "list" to see all services with logs
+  - run: "latest" (default), "list" to show run history, or timestamp like "2024-02-11_143022"
+  - lines: Number of lines from end (default: 100)
+  - Returns: Log file content from /tmp/crux-logs/<service>/<timestamp>.log
+  - USE WHEN: Tab crashed/closed, debugging failed startup, or viewing run history
+
+Log structure:
+  /tmp/crux-logs/<service>/<timestamp>.log (keeps last 10 runs per service)
+  /tmp/crux-logs/<service>/latest.log -> symlink to most recent
+
+If a command fails, the tab stays open with error message until Enter is pressed.
 
 Examples:
-- "What services are running?"
-- "Hot reload the Flutter app"
-- "Show backend logs"
+- "What services are running?" -> crux_status
+- "Hot reload Flutter" -> crux_send tab="flutter" text="r"
+- "Show live backend logs" -> crux_logs tab="backend"
+- "Backend crashed, what happened?" -> crux_logfile service="backend"
+- "What services have logs?" -> crux_logfile service="list"
+- "Show previous backend runs" -> crux_logfile service="backend" run="list"
+- "Read this morning's run" -> crux_logfile service="backend" run="2024-02-11_090000"
 
 ## Notes
 - For Python projects with venv, use a shell script (./run.sh) as the command
@@ -476,17 +540,32 @@ func printHelp() {
 	fmt.Printf(`crux - Dev Environment Orchestrator (v%s)
 
 USAGE:
-    crux [command]
+    crux [options] [command]
+
+OPTIONS:
+    -c, --config FILE   Use specified config file (default: config.yaml)
 
 COMMANDS:
-    (none)      Start services from config.yaml in current directory
+    (none)      Start services from config file
     init        Generate example config.yaml
     prompt      Print AI agent prompt (for configuring crux via LLM)
     help        Show this help message
     version     Show version
 
+    Examples:
+        crux                        # Use config.yaml
+        crux -c config.test.yaml    # Use test configuration
+        crux --config=config.e2e.yaml
+
 CONFIGURATION:
     Create a config.yaml in your project root:
+
+    # Dependencies are checked/started before services
+    dependencies:
+      - name: postgres
+        check: pg_isready -h localhost -p 5432
+        start: docker run -d --name crux-postgres -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:15
+        timeout: 30
 
     services:
       - name: backend           # Display name for the tab
@@ -498,11 +577,6 @@ CONFIGURATION:
         command: flutter
         args: ["run", "-d", "iPhone 15 Pro"]
         workdir: ./mobile
-
-      - name: web-admin
-        command: npm
-        args: ["run", "dev"]
-        workdir: ./webapps/admin
 
     terminal:
       app: wezterm    # Options: wezterm (recommended), kitty, tmux
@@ -555,8 +629,10 @@ MCP INTEGRATION:
     Available MCP tools:
       crux_status  - List all terminal tabs
       crux_send    - Send commands to tabs (r=reload, R=restart, q=quit)
-      crux_logs    - Get terminal output from tabs
+      crux_logs    - Get live terminal output from running tabs
       crux_focus   - Focus a specific tab
+      crux_logfile - Read log history for crashed/closed tabs
+                     Logs: /tmp/crux-logs/<service>/<timestamp>.log
 
 MORE INFO:
     https://github.com/glorko/crux
@@ -572,6 +648,34 @@ func generateExampleConfig() {
 
 	example := `# Crux Configuration
 # Run with: crux
+# Requires: Wezterm, Docker (for dependencies)
+
+# Dependencies are checked/started before services
+# Each has: check (command to verify running), start (command to run if not), timeout (seconds)
+dependencies:
+  # PostgreSQL via Docker
+  - name: postgres
+    check: pg_isready -h localhost -p 5432
+    start: docker run -d --name crux-postgres -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:15
+    timeout: 30
+
+  # Redis via Docker  
+  - name: redis
+    check: redis-cli ping
+    start: docker run -d --name crux-redis -p 6379:6379 redis:7
+    timeout: 15
+
+  # iOS Simulator (uncomment if needed)
+  # - name: ios-simulator
+  #   check: xcrun simctl list devices | grep -q Booted
+  #   start: open -a Simulator
+  #   timeout: 60
+
+  # Android Emulator (uncomment and set your AVD name)
+  # - name: android-emulator
+  #   check: adb devices | grep -q emulator
+  #   start: emulator -avd Pixel_7_API_34 &
+  #   timeout: 120
 
 services:
   # Backend service example
@@ -581,17 +685,17 @@ services:
     # workdir: ./backend  # optional working directory
 
   # Flutter iOS example (get UUID: xcrun simctl list devices)
-  - name: flutter-ios
-    command: flutter
-    args: ["run", "-d", "YOUR-IOS-SIMULATOR-UUID"]
-    # workdir: ./mobile
+  # - name: flutter-ios
+  #   command: flutter
+  #   args: ["run", "-d", "YOUR-IOS-SIMULATOR-UUID"]
+  #   workdir: ./mobile
 
-  # Flutter Android example (start emulator first, get ID: flutter devices)
-  - name: flutter-android
-    command: flutter
-    args: ["run", "-d", "emulator-5554"]
+  # Flutter Android example (device ID from: flutter devices)
+  # - name: flutter-android
+  #   command: flutter
+  #   args: ["run", "-d", "emulator-5554"]
 
-  # Web app example (uncomment to use)
+  # Web app example
   # - name: web-admin
   #   command: npm
   #   args: ["run", "dev"]

@@ -3,18 +3,29 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 // PlaygroundConfig is the configuration for the playground
 type PlaygroundConfig struct {
-	Services []ServiceConfig `yaml:"services"`
-	API      APIConfig       `yaml:"api"`
-	Tmux     TmuxConfig      `yaml:"tmux"`
-	Terminal TerminalConfig  `yaml:"terminal"`
+	Dependencies []DependencyConfig `yaml:"dependencies"`
+	Services     []ServiceConfig    `yaml:"services"`
+	API          APIConfig          `yaml:"api"`
+	Tmux         TmuxConfig         `yaml:"tmux"`
+	Terminal     TerminalConfig     `yaml:"terminal"`
+}
+
+// DependencyConfig defines a dependency to check/start before services
+type DependencyConfig struct {
+	Name    string `yaml:"name"`              // Display name (e.g., "postgres", "redis")
+	Check   string `yaml:"check"`             // Command to check if running (exit 0 = running)
+	Start   string `yaml:"start,omitempty"`   // Command to start if not running (optional)
+	Timeout int    `yaml:"timeout,omitempty"` // Seconds to wait for check to pass after start (default: 30)
 }
 
 // TerminalConfig defines the terminal app to use
@@ -40,13 +51,10 @@ type TmuxConfig struct {
 	SessionName string `yaml:"session_name"`
 }
 
-// LoadPlaygroundConfig loads configuration from config.yaml
-func LoadPlaygroundConfig() (*PlaygroundConfig, error) {
-	// Look for config.yaml in current directory
-	configPath := "config.yaml"
-	
+// LoadPlaygroundConfig loads configuration from the specified file
+func LoadPlaygroundConfig(configPath string) (*PlaygroundConfig, error) {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("config.yaml not found in current directory")
+		return nil, fmt.Errorf("%s not found", configPath)
 	}
 
 	data, err := os.ReadFile(configPath)
@@ -135,4 +143,76 @@ func (c *PlaygroundConfig) String() string {
 		sb.WriteString(fmt.Sprintf("    - %s: %s %v\n", svc.Name, svc.Command, svc.Args))
 	}
 	return sb.String()
+}
+
+// CheckDependencies checks and starts all dependencies
+// Returns nil if all dependencies are ready, error otherwise
+func (c *PlaygroundConfig) CheckDependencies() error {
+	if len(c.Dependencies) == 0 {
+		return nil
+	}
+
+	fmt.Println("🔍 Checking dependencies...")
+	fmt.Println()
+
+	for _, dep := range c.Dependencies {
+		if err := checkDependency(dep); err != nil {
+			return err
+		}
+	}
+
+	fmt.Println()
+	return nil
+}
+
+// checkDependency checks a single dependency and starts it if needed
+func checkDependency(dep DependencyConfig) error {
+	timeout := dep.Timeout
+	if timeout == 0 {
+		timeout = 30 // Default 30 seconds
+	}
+
+	// Run check command
+	if runCheck(dep.Check) {
+		fmt.Printf("  ✅ %s is running\n", dep.Name)
+		return nil
+	}
+
+	// Not running - try to start
+	if dep.Start == "" {
+		return fmt.Errorf("❌ %s is not running and no start command provided\n   Check: %s", dep.Name, dep.Check)
+	}
+
+	fmt.Printf("  ⏳ %s not running, starting...\n", dep.Name)
+
+	// Run start command (in background for things like emulators)
+	startCmd := exec.Command("sh", "-c", dep.Start)
+	startCmd.Stdout = nil
+	startCmd.Stderr = nil
+	if err := startCmd.Start(); err != nil {
+		return fmt.Errorf("❌ Failed to start %s: %v\n   Command: %s", dep.Name, err, dep.Start)
+	}
+
+	// Poll check command until timeout
+	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(2 * time.Second)
+		if runCheck(dep.Check) {
+			fmt.Printf("  ✅ %s is ready\n", dep.Name)
+			return nil
+		}
+		remaining := int(time.Until(deadline).Seconds())
+		fmt.Printf("     waiting... (%ds remaining)\n", remaining)
+	}
+
+	return fmt.Errorf("❌ %s failed to start within %ds\n   Check: %s", dep.Name, timeout, dep.Check)
+}
+
+// runCheck runs a check command and returns true if it exits with 0
+func runCheck(checkCmd string) bool {
+	cmd := exec.Command("sh", "-c", checkCmd)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	err := cmd.Run()
+	return err == nil
 }

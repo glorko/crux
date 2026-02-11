@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -200,6 +201,28 @@ func handleRequest(req Request) {
 					Required: []string{"tab"},
 				},
 			},
+			{
+				Name:        "crux_logfile",
+				Description: "Read log files for crashed/closed tabs. Logs saved to /tmp/crux-logs/<service>/<timestamp>.log. Each run creates a new timestamped log.",
+				InputSchema: InputSchema{
+					Type: "object",
+					Properties: map[string]Property{
+						"service": {
+							Type:        "string",
+							Description: "Service name (e.g., 'backend') or 'list' to show all services with logs",
+						},
+						"run": {
+							Type:        "string",
+							Description: "Which run to read: 'latest' (default), 'list' to show all runs, or timestamp like '2024-02-11_143022'",
+						},
+						"lines": {
+							Type:        "string",
+							Description: "Number of lines to read from end (default: 100)",
+						},
+					},
+					Required: []string{"service"},
+				},
+			},
 		}
 		sendResult(req.ID, ToolsListResult{Tools: tools})
 
@@ -237,6 +260,12 @@ func handleToolCall(id interface{}, params CallToolParams) {
 	case "crux_focus":
 		tab, _ := params.Arguments["tab"].(string)
 		result, isError = focusTab(tab)
+
+	case "crux_logfile":
+		service, _ := params.Arguments["service"].(string)
+		run, _ := params.Arguments["run"].(string)
+		lines, _ := params.Arguments["lines"].(string)
+		result, isError = readLogFile(service, run, lines)
 
 	default:
 		result = fmt.Sprintf("Unknown tool: %s", params.Name)
@@ -432,6 +461,132 @@ func focusTab(tabRef string) (string, bool) {
 	exec.Command("osascript", "-e", `tell application "WezTerm" to activate`).Run()
 
 	return fmt.Sprintf("Focused tab %d (%s)", tabNum, pane.Title), false
+}
+
+func readLogFile(service string, run string, linesArg string) (string, bool) {
+	baseDir := "/tmp/crux-logs"
+	
+	// List all services with logs
+	if service == "list" || service == "" {
+		entries, err := os.ReadDir(baseDir)
+		if err != nil || len(entries) == 0 {
+			return "No crux logs found. Logs are created when you run 'crux'.\nLocation: /tmp/crux-logs/<service>/<timestamp>.log", true
+		}
+		
+		var result strings.Builder
+		result.WriteString("=== Crux Log History ===\n\n")
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			svcName := entry.Name()
+			svcDir := filepath.Join(baseDir, svcName)
+			
+			// Count log files and get latest
+			logs, _ := filepath.Glob(filepath.Join(svcDir, "*.log"))
+			// Filter out latest.log symlink
+			var realLogs []string
+			for _, l := range logs {
+				if filepath.Base(l) != "latest.log" {
+					realLogs = append(realLogs, l)
+				}
+			}
+			
+			if len(realLogs) > 0 {
+				// Get info on latest
+				latestPath := filepath.Join(svcDir, "latest.log")
+				info, _ := os.Stat(latestPath)
+				if info != nil {
+					result.WriteString(fmt.Sprintf("  %s: %d runs, latest: %s (%.1f KB)\n",
+						svcName, len(realLogs), info.ModTime().Format("2006-01-02 15:04:05"), float64(info.Size())/1024))
+				} else {
+					result.WriteString(fmt.Sprintf("  %s: %d runs\n", svcName, len(realLogs)))
+				}
+			}
+		}
+		result.WriteString("\nUsage:\n")
+		result.WriteString("  crux_logfile service=\"backend\"           - read latest run\n")
+		result.WriteString("  crux_logfile service=\"backend\" run=\"list\" - list all runs\n")
+		result.WriteString("  crux_logfile service=\"backend\" run=\"2024-02-11_143022\" - specific run\n")
+		return result.String(), false
+	}
+	
+	svcDir := filepath.Join(baseDir, service)
+	
+	// Check service exists
+	if _, err := os.Stat(svcDir); os.IsNotExist(err) {
+		return fmt.Sprintf("No logs for service '%s'.\nUse crux_logfile service=\"list\" to see available services.", service), true
+	}
+	
+	// List runs for this service
+	if run == "list" {
+		logs, _ := filepath.Glob(filepath.Join(svcDir, "*.log"))
+		var realLogs []string
+		for _, l := range logs {
+			if filepath.Base(l) != "latest.log" {
+				realLogs = append(realLogs, l)
+			}
+		}
+		
+		if len(realLogs) == 0 {
+			return fmt.Sprintf("No log files found for service '%s'.", service), true
+		}
+		
+		var result strings.Builder
+		result.WriteString(fmt.Sprintf("=== Runs for %s (%d total) ===\n\n", service, len(realLogs)))
+		
+		// Sort by name (timestamp) descending
+		for i := len(realLogs) - 1; i >= 0; i-- {
+			l := realLogs[i]
+			name := filepath.Base(l)
+			timestamp := strings.TrimSuffix(name, ".log")
+			info, _ := os.Stat(l)
+			if info != nil {
+				result.WriteString(fmt.Sprintf("  %s (%.1f KB)\n", timestamp, float64(info.Size())/1024))
+			} else {
+				result.WriteString(fmt.Sprintf("  %s\n", timestamp))
+			}
+		}
+		result.WriteString(fmt.Sprintf("\nUse crux_logfile service=\"%s\" run=\"<timestamp>\" to read a specific run.", service))
+		return result.String(), false
+	}
+	
+	// Determine which log file to read
+	var logPath string
+	if run == "" || run == "latest" {
+		logPath = filepath.Join(svcDir, "latest.log")
+	} else {
+		// Specific timestamp
+		logPath = filepath.Join(svcDir, run+".log")
+	}
+	
+	content, err := os.ReadFile(logPath)
+	if err != nil {
+		return fmt.Sprintf("Log file not found: %s\nUse crux_logfile service=\"%s\" run=\"list\" to see available runs.", logPath, service), true
+	}
+	
+	// Get last N lines
+	numLines := 100
+	if n, err := strconv.Atoi(linesArg); err == nil && n > 0 {
+		numLines = n
+	}
+	
+	lines := strings.Split(string(content), "\n")
+	start := len(lines) - numLines
+	if start < 0 {
+		start = 0
+	}
+	
+	runLabel := run
+	if runLabel == "" || runLabel == "latest" {
+		runLabel = "latest"
+	}
+	
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("=== %s / %s (last %d lines) ===\n\n", service, runLabel, numLines))
+	result.WriteString(strings.Join(lines[start:], "\n"))
+	
+	return result.String(), false
 }
 
 func sendResult(id interface{}, result interface{}) {

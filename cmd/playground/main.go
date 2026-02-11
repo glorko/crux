@@ -413,7 +413,9 @@ Examples:
 
 ## Notes
 - For Python projects with venv, use a shell script (./run.sh) as the command
-- For Flutter, specify device with -d flag (simulator name or ID)
+- For Flutter, you need actual device IDs:
+  - iOS: Get UUID with `xcrun simctl list devices`
+  - Android: Start emulator first (`emulator -avd AVD_NAME`), then get ID from `flutter devices`
 - Services run in interactive terminals - Ctrl+C, keyboard input all work
 - Wezterm must be installed: brew install --cask wezterm
 
@@ -466,10 +468,15 @@ EXAMPLES:
       command: ./run.sh
       workdir: backend
 
-    # Flutter with device
+    # Flutter iOS (use UUID from: xcrun simctl list)
     - name: consumer-ios
       command: flutter
-      args: ["run", "-d", "iPhone 15 Pro"]
+      args: ["run", "-d", "YOUR-IOS-SIMULATOR-UUID"]
+
+    # Flutter Android (start emulator first, get ID from: flutter devices)
+    - name: vendor-android
+      command: flutter
+      args: ["run", "-d", "emulator-5554"]
 
     # npm/Node.js
     - name: admin-web
@@ -523,13 +530,13 @@ services:
     args: ["run", "./cmd/server"]
     # workdir: ./backend  # optional working directory
 
-  # Flutter iOS example
+  # Flutter iOS example (get UUID: xcrun simctl list devices)
   - name: flutter-ios
     command: flutter
-    args: ["run", "-d", "iPhone 15 Pro"]
+    args: ["run", "-d", "YOUR-IOS-SIMULATOR-UUID"]
     # workdir: ./mobile
 
-  # Flutter Android example
+  # Flutter Android example (start emulator first, get ID: flutter devices)
   - name: flutter-android
     command: flutter
     args: ["run", "-d", "emulator-5554"]

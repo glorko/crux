@@ -109,7 +109,11 @@ services:
     
   - name: flutter-ios
     command: flutter
-    args: ["run", "-d", "iPhone 15 Pro"]
+    args: ["run", "-d", "YOUR-IOS-SIMULATOR-UUID"]  # Get UUID: xcrun simctl list
+    
+  - name: flutter-android
+    command: flutter
+    args: ["run", "-d", "emulator-5554"]  # Start emulator first, then check: flutter devices
     
   - name: web-admin
     command: npm
@@ -119,6 +123,10 @@ services:
 terminal:
   app: wezterm  # Options: wezterm, kitty, tmux
 ```
+
+> **Note:** For Flutter, you need device IDs not names:
+> - **iOS**: Get UUID with `xcrun simctl list devices` (e.g., `90266925-B62F-4741-A89E-EF11BFA0CC57`)
+> - **Android**: Start emulator first (`emulator -avd Pixel_9a`), then use the ID from `flutter devices` (e.g., `emulator-5554`)
 
 2. Run crux:
 
@@ -142,11 +150,11 @@ services:
     
   - name: flutter-ios
     command: flutter
-    args: ["run", "-d", "iPhone 15 Pro"]
+    args: ["run", "-d", "YOUR-IOS-UUID"]  # xcrun simctl list
     
   - name: flutter-android
     command: flutter
-    args: ["run", "-d", "Pixel 9a"]
+    args: ["run", "-d", "emulator-5554"]  # flutter devices
     
   - name: web-admin
     command: npm

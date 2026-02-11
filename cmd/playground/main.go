@@ -380,10 +380,25 @@ If not found, tell the user:
 ## Step 3: Analyze this project
 Look at the project structure to identify:
 - Backend services (Go, Python, Node.js, etc.)
-- Mobile apps (Flutter iOS/Android)
+- Mobile apps (Flutter, React Native, iOS, Android)
 - Web apps (React, Vue, etc.)
 - Required infrastructure (Docker, databases)
 - Existing run scripts (run.sh, Makefile, package.json scripts)
+
+## Step 3b: For mobile projects, detect available devices
+If Flutter/React Native/mobile projects found:
+
+For iOS simulators, run: xcrun simctl list devices available
+- Look for "Booted" or available simulators
+- Use the UUID (e.g., "90266925-B62F-4741-A89E-EF11BFA0CC57")
+- If none available, tell user: "No iOS simulators found. Create one in Xcode > Window > Devices and Simulators"
+
+For Android emulators, run: emulator -list-avds
+- If AVDs exist, tell user to start one: "emulator -avd AVD_NAME &"
+- Then get the device ID with: flutter devices (look for "emulator-5554" or similar)
+- If no AVDs, tell user: "No Android emulators found. Create one in Android Studio > Device Manager"
+
+Use the actual device IDs in config.yaml, not device names.
 
 ## Step 4: Create config.yaml
 Create a config.yaml in the project root with:

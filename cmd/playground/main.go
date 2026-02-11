@@ -384,8 +384,22 @@ Look at the project structure to identify:
 - Backend services (Go, Python, Node.js, etc.)
 - Mobile apps (Flutter, React Native, iOS, Android)
 - Web apps (React, Vue, etc.)
-- Required infrastructure (Docker, databases)
 - Existing run scripts (run.sh, Makefile, package.json scripts)
+
+## Step 3a: Check if dependencies are already running
+Before adding Docker/database services to config, check if they're already running:
+
+For PostgreSQL: pg_isready -h localhost -p 5432
+For Redis: redis-cli ping
+For Docker services: docker ps
+
+If services are already running locally, do NOT add them to crux config.
+Only add docker/infrastructure commands if:
+1. Services are not running AND
+2. Project has docker-compose.yml or similar AND
+3. User confirms they want crux to manage infrastructure
+
+Ask user: "I see PostgreSQL/Redis/etc in your project. Are these already running locally, or should crux start them?"
 
 ## Step 3b: For mobile projects, detect available devices
 If Flutter/React Native/mobile projects found:

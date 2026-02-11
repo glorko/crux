@@ -172,40 +172,78 @@ func checkDependency(dep DependencyConfig) error {
 		timeout = 30 // Default 30 seconds
 	}
 
+	fmt.Printf("  📦 %s\n", dep.Name)
+	fmt.Printf("     check: %s\n", dep.Check)
+
 	// Run check command
 	if runCheck(dep.Check) {
-		fmt.Printf("  ✅ %s is running\n", dep.Name)
+		fmt.Printf("     ✅ already running\n")
 		return nil
 	}
 
 	// Not running - try to start
 	if dep.Start == "" {
-		return fmt.Errorf("❌ %s is not running and no start command provided\n   Check: %s", dep.Name, dep.Check)
+		fmt.Printf("     ❌ not running (no start command)\n")
+		return fmt.Errorf("dependency %s is not running and no start command provided", dep.Name)
 	}
 
-	fmt.Printf("  ⏳ %s not running, starting...\n", dep.Name)
+	fmt.Printf("     start: %s\n", dep.Start)
 
-	// Run start command (in background for things like emulators)
+	// Run start command and capture output
 	startCmd := exec.Command("sh", "-c", dep.Start)
-	startCmd.Stdout = nil
-	startCmd.Stderr = nil
-	if err := startCmd.Start(); err != nil {
-		return fmt.Errorf("❌ Failed to start %s: %v\n   Command: %s", dep.Name, err, dep.Start)
+	output, err := startCmd.CombinedOutput()
+	if err != nil {
+		// For background commands (ending with &), Start() is used instead
+		if strings.HasSuffix(strings.TrimSpace(dep.Start), "&") {
+			startCmd = exec.Command("sh", "-c", dep.Start)
+			if err := startCmd.Start(); err != nil {
+				fmt.Printf("     ❌ failed to start: %v\n", err)
+				return fmt.Errorf("failed to start %s: %v", dep.Name, err)
+			}
+		} else {
+			fmt.Printf("     ❌ start failed: %v\n", err)
+			if len(output) > 0 {
+				// Show first few lines of output
+				lines := strings.Split(string(output), "\n")
+				for i, line := range lines {
+					if i >= 3 {
+						fmt.Printf("        ... (truncated)\n")
+						break
+					}
+					if line != "" {
+						fmt.Printf("        %s\n", line)
+					}
+				}
+			}
+			return fmt.Errorf("failed to start %s", dep.Name)
+		}
+	} else if len(output) > 0 {
+		// Show container ID or similar short output
+		outStr := strings.TrimSpace(string(output))
+		if len(outStr) > 60 {
+			outStr = outStr[:60] + "..."
+		}
+		if outStr != "" && !strings.Contains(outStr, "\n") {
+			fmt.Printf("     → %s\n", outStr)
+		}
 	}
+
+	fmt.Printf("     ⏳ waiting for ready (timeout: %ds)...\n", timeout)
 
 	// Poll check command until timeout
 	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	attempts := 0
 	for time.Now().Before(deadline) {
 		time.Sleep(2 * time.Second)
+		attempts++
 		if runCheck(dep.Check) {
-			fmt.Printf("  ✅ %s is ready\n", dep.Name)
+			fmt.Printf("     ✅ ready (after %ds)\n", attempts*2)
 			return nil
 		}
-		remaining := int(time.Until(deadline).Seconds())
-		fmt.Printf("     waiting... (%ds remaining)\n", remaining)
 	}
 
-	return fmt.Errorf("❌ %s failed to start within %ds\n   Check: %s", dep.Name, timeout, dep.Check)
+	fmt.Printf("     ❌ timeout after %ds\n", timeout)
+	return fmt.Errorf("dependency %s failed to become ready within %ds", dep.Name, timeout)
 }
 
 // runCheck runs a check command and returns true if it exits with 0

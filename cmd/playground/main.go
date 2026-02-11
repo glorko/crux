@@ -156,6 +156,10 @@ func runWithWezterm(cfg *PlaygroundConfig) {
 		os.Exit(1)
 	}
 
+	// Kill any previous crux session
+	fmt.Println("🧹 Cleaning up previous session...")
+	wez.KillPrevious()
+
 	fmt.Println("📺 Opening Wezterm with service tabs...")
 
 	// Convert services to ServiceDef
@@ -174,12 +178,25 @@ func runWithWezterm(cfg *PlaygroundConfig) {
 		os.Exit(1)
 	}
 
+	// Save pane IDs for cleanup on next run or Ctrl+C
+	wez.SavePanes()
+
 	fmt.Println()
 	fmt.Println("✅ Services running in Wezterm tabs!")
-	fmt.Println("   Ctrl+Shift+T = new tab")
-	fmt.Println("   Ctrl+Tab / Ctrl+Shift+Tab = switch tabs")
-	fmt.Println("   Ctrl+Shift+W = close tab")
 	fmt.Println()
+	fmt.Println("   Ctrl+C here = close all tabs and exit")
+	fmt.Println("   Or just close this terminal - tabs stay running")
+	fmt.Println()
+
+	// Handle Ctrl+C to cleanup
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Wait for signal
+	<-sigChan
+	fmt.Println("\n🛑 Shutting down...")
+	wez.Cleanup()
+	fmt.Println("✅ All tabs closed")
 }
 
 // runWithKitty uses native Kitty tabs with remote control

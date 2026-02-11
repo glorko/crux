@@ -1,12 +1,16 @@
 package terminal
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
+
+const cruxPanesFile = "/tmp/crux-panes.txt"
 
 // WeztermLauncher manages services in Wezterm tabs
 type WeztermLauncher struct {
@@ -20,6 +24,49 @@ func NewWeztermLauncher() *WeztermLauncher {
 		paneIDs: make([]string, 0),
 	}
 }
+
+// KillPrevious kills any previous crux Wezterm window
+func (w *WeztermLauncher) KillPrevious() {
+	// Read saved pane IDs from previous run
+	data, err := os.ReadFile(cruxPanesFile)
+	if err != nil {
+		return // No previous session
+	}
+
+	paneIDs := strings.Split(strings.TrimSpace(string(data)), "\n")
+	for _, paneID := range paneIDs {
+		paneID = strings.TrimSpace(paneID)
+		if paneID == "" {
+			continue
+		}
+		// Kill each pane - this closes tabs
+		exec.Command("wezterm", "cli", "kill-pane", "--pane-id", paneID).Run()
+	}
+
+	os.Remove(cruxPanesFile)
+}
+
+// SavePanes saves current pane IDs for cleanup on next run
+func (w *WeztermLauncher) SavePanes() error {
+	if len(w.paneIDs) == 0 {
+		return nil
+	}
+
+	content := strings.Join(w.paneIDs, "\n")
+	return os.WriteFile(cruxPanesFile, []byte(content), 0644)
+}
+
+// Cleanup kills all panes from this session
+func (w *WeztermLauncher) Cleanup() {
+	for _, paneID := range w.paneIDs {
+		exec.Command("wezterm", "cli", "kill-pane", "--pane-id", paneID).Run()
+	}
+	os.Remove(cruxPanesFile)
+}
+
+// Keep for potential future use
+var _ = filepath.Join
+var _ = bufio.NewReader
 
 // Name returns the launcher name
 func (w *WeztermLauncher) Name() string {

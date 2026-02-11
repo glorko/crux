@@ -44,12 +44,13 @@ brew install --cask wezterm
 git clone https://github.com/glorko/crux.git
 cd crux
 
-# Build crux (main binary)
-go build -o ~/go/bin/crux ./cmd/playground
-
-# Build crux-mcp (for AI/Cursor integration)
-go build -o ~/bin/crux-mcp ./cmd/mcp
+# Install both crux and crux-mcp
+./install.sh
 ```
+
+This installs:
+- `crux` → `~/go/bin/crux`
+- `crux-mcp` → `~/bin/crux-mcp`
 
 ### 3. Add to PATH
 

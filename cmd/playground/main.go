@@ -363,18 +363,16 @@ I want you to set up and run my development environment using crux.
 
 ## Step 1: Verify crux is installed
 Run: crux --help
-If not found, tell the user to install crux first:
+If not found, tell the user to install crux:
   git clone https://github.com/glorko/crux.git
   cd crux
-  go build -o ~/go/bin/crux ./cmd/playground
-  go build -o ~/bin/crux-mcp ./cmd/mcp
+  ./install.sh
   # Add ~/go/bin and ~/bin to PATH
 
 ## Step 2: Check MCP integration
 Run: which crux-mcp
 If not found, tell the user:
-  "crux-mcp is not installed. Build it with:
-   cd <crux-repo> && go build -o ~/bin/crux-mcp ./cmd/mcp
+  "crux-mcp is not installed. Run ./install.sh in the crux repo.
    
    Then add to Cursor MCP config:
    {\"mcpServers\":{\"crux\":{\"command\":\"${HOME}/bin/crux-mcp\",\"args\":[]}}}"

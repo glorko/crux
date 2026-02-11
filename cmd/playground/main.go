@@ -414,8 +414,8 @@ Examples:
 ## Notes
 - For Python projects with venv, use a shell script (./run.sh) as the command
 - For Flutter, you need actual device IDs:
-  - iOS: Get UUID with `xcrun simctl list devices`
-  - Android: Start emulator first (`emulator -avd AVD_NAME`), then get ID from `flutter devices`
+  - iOS: Get UUID with "xcrun simctl list devices"
+  - Android: Start emulator first, then get ID from "flutter devices"
 - Services run in interactive terminals - Ctrl+C, keyboard input all work
 - Wezterm must be installed: brew install --cask wezterm
 

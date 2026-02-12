@@ -34,11 +34,11 @@ func (w *Worker) SendCommand(cmd string) error {
 }
 
 func main() {
-	// Parse config file path from args
+	// Parse config file path and positional args
 	configPath := "config.yaml"
 	args := os.Args[1:]
-	
-	// Handle CLI flags
+	var positional []string
+
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-h", "--help", "help":
@@ -56,17 +56,18 @@ func main() {
 		case "-c", "--config":
 			if i+1 < len(args) {
 				configPath = args[i+1]
-				i++ // skip next arg
+				i++
 			} else {
 				fmt.Println("❌ --config requires a file path")
 				os.Exit(1)
 			}
 		default:
-			// Check if it's -c=path or --config=path format
 			if strings.HasPrefix(args[i], "-c=") {
 				configPath = strings.TrimPrefix(args[i], "-c=")
 			} else if strings.HasPrefix(args[i], "--config=") {
 				configPath = strings.TrimPrefix(args[i], "--config=")
+			} else {
+				positional = append(positional, args[i])
 			}
 		}
 	}
@@ -93,6 +94,16 @@ func main() {
 	}
 	fmt.Println(")")
 	fmt.Println()
+
+	// Start only one service into existing Wezterm window (e.g. after a crash)
+	if len(positional) >= 2 && positional[0] == "start-one" {
+		serviceName := positional[1]
+		if err := runStartOne(cfg, configPath, serviceName); err != nil {
+			fmt.Printf("❌ %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Check and start dependencies first
 	if err := cfg.CheckDependencies(); err != nil {
@@ -147,6 +158,51 @@ func main() {
 	}
 }
 
+// runStartOne starts a single service in a new tab in the existing Wezterm window.
+// Use after one service crashed: crux start-one backend (or crux -c other.yaml start-one backend).
+func runStartOne(cfg *PlaygroundConfig, configPath string, serviceName string) error {
+	var svc *ServiceConfig
+	for i := range cfg.Services {
+		if cfg.Services[i].Name == serviceName {
+			svc = &cfg.Services[i]
+			break
+		}
+	}
+	if svc == nil {
+		var names []string
+		for _, s := range cfg.Services {
+			names = append(names, s.Name)
+		}
+		return fmt.Errorf("service %q not found in config (available: %s)", serviceName, strings.Join(names, ", "))
+	}
+
+	cwd, _ := os.Getwd()
+	workDir := svc.WorkDir
+	if workDir == "" {
+		workDir = cwd
+	}
+
+	// Only wezterm supports spawning into existing window via CLI
+	wez := terminal.NewWeztermLauncher()
+	if !wez.IsAvailable() {
+		return fmt.Errorf("start-one requires wezterm (install from https://wezterm.org/)")
+	}
+
+	paneID, err := terminal.GetFirstPaneID()
+	if err != nil {
+		return fmt.Errorf("no Wezterm window open: %w (open Wezterm and run crux, or start the crashed tab manually)", err)
+	}
+
+	_, err = terminal.SpawnTabInPane(paneID, svc.Name, workDir, svc.Command, svc.ExpandArgs())
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("  ✅ %s started in new tab\n", svc.Name)
+	wez.ActivateWindow()
+	return nil
+}
+
 // runWithWezterm uses native Wezterm tabs (no tmux needed)
 func runWithWezterm(cfg *PlaygroundConfig) {
 	wez := terminal.NewWeztermLauncher()
@@ -181,8 +237,18 @@ func runWithWezterm(cfg *PlaygroundConfig) {
 	// Save pane IDs for cleanup on next run or Ctrl+C
 	wez.SavePanes()
 
+	// Start API server for MCP (MCP calls crux API, not wezterm)
+	apiServer := api.NewServer(cfg.API.Port)
+	apiServer.SetTabController(newWeztermTabController(wez))
+	apiServer.SetOnShutdown(func() {
+		wez.Cleanup()
+		os.Exit(0)
+	})
+	go apiServer.Start()
+
 	fmt.Println()
 	fmt.Println("✅ Services running in Wezterm tabs!")
+	fmt.Printf("\n🌐 API: http://localhost:%d (MCP uses this)\n", cfg.API.Port)
 	fmt.Println()
 	fmt.Println("   Ctrl+C here = close all tabs and exit")
 	fmt.Println("   Or just close this terminal - tabs stay running")
@@ -567,6 +633,7 @@ COMMANDS:
         crux                        # Use config.yaml
         crux -c config.test.yaml    # Use test configuration
         crux --config=config.e2e.yaml
+        crux start-one backend      # Start only one service in current Wezterm window (e.g. after crash)
 
 CONFIGURATION:
     Create a config.yaml in your project root:

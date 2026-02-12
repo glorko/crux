@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,16 +13,25 @@ import (
 
 const cruxPanesFile = "/tmp/crux-panes.txt"
 
+// weztermListEntry matches one item from wezterm cli list --format json
+type weztermListEntry struct {
+	WindowID float64 `json:"window_id"`
+	PaneID   float64 `json:"pane_id"`
+}
+
 // WeztermLauncher manages services in Wezterm tabs
 type WeztermLauncher struct {
-	paneIDs     []string // Track pane IDs for each spawned tab
-	firstPaneID string   // The first pane ID (used for spawning new tabs)
+	paneIDs       []string          // Track pane IDs for each spawned tab
+	firstPaneID   string            // Anchor pane ID (used for spawning new tabs)
+	firstWindowID string            // Window ID of our crux window (preferred for spawn)
+	servicePanes  map[string]string // service name -> pane ID (for API/MCP)
 }
 
 // NewWeztermLauncher creates a new Wezterm launcher
 func NewWeztermLauncher() *WeztermLauncher {
 	return &WeztermLauncher{
-		paneIDs: make([]string, 0),
+		paneIDs:      make([]string, 0),
+		servicePanes: make(map[string]string),
 	}
 }
 
@@ -169,24 +179,35 @@ func (w *WeztermLauncher) OpenWindow(title string, workDir string, command strin
 	// Wait for wezterm to start and create its socket
 	time.Sleep(1500 * time.Millisecond)
 	
-	// Get the pane ID from the running instance
+	// Get pane + window ID from our NEW window (wezterm start just created it).
+	// Use LAST entry - our new window is typically last in the list.
+	// Using "first" can pick a pane from an existing window (e.g. where user ran crux).
 	listCmd := exec.Command("wezterm", "cli", "list", "--format", "json")
 	output, err := listCmd.Output()
-	if err != nil {
-		// Still return success - window was opened
-		w.paneIDs = append(w.paneIDs, "0")
-		return "0", nil
-	}
-
-	// Parse to get pane ID (simplified - just track that we have one)
 	paneID := "0"
-	if len(output) > 0 {
-		// Extract first pane_id from JSON if possible
-		paneID = extractFirstPaneID(string(output))
+	windowID := "0"
+	if err == nil && len(output) > 0 {
+		windowID, paneID = parseListLastWindowAndPane(string(output))
+		if paneID == "0" {
+			paneID = extractLastPaneID(string(output))
+		}
+		if paneID == "0" {
+			paneID = extractFirstPaneID(string(output))
+		}
 	}
+	w.firstWindowID = windowID
+	w.firstPaneID = paneID
 	w.paneIDs = append(w.paneIDs, paneID)
-	w.firstPaneID = paneID // Store for use when spawning new tabs
+
+	setTabTitle(paneID, title)
+	w.servicePanes[title] = paneID
 	return paneID, nil
+}
+
+// setTabTitle sets the tab title so it shows the service name instead of "bash"
+func setTabTitle(paneID string, title string) {
+	cmd := exec.Command("wezterm", "cli", "set-tab-title", "--pane-id", paneID, title)
+	_ = cmd.Run() // Best effort - don't fail if title can't be set
 }
 
 // extractFirstPaneID extracts the first pane_id from wezterm cli list JSON output
@@ -207,40 +228,129 @@ func extractFirstPaneID(jsonOutput string) string {
 	return "0"
 }
 
-// SpawnTab spawns a new tab in the existing Wezterm window
-func (w *WeztermLauncher) SpawnTab(title string, workDir string, command string, args []string) (string, error) {
-	// Wrap command to log and keep open on failure
-	wrappedCmd, wrappedArgs := wrapCommand(title, command, args)
-	
-	cmdArgs := []string{"cli", "spawn"}
-	
-	// Must specify --pane-id when running from outside Wezterm
-	if w.firstPaneID != "" {
-		cmdArgs = append(cmdArgs, "--pane-id", w.firstPaneID)
+// extractLastPaneID extracts the LAST pane_id - use after wezterm start to get OUR new window's pane.
+// wezterm list order is undefined; the window we just created is often last.
+func extractLastPaneID(jsonOutput string) string {
+	var last string
+	search := jsonOutput
+	for {
+		idx := strings.Index(search, `"pane_id":`)
+		if idx == -1 {
+			break
+		}
+		start := idx + len(`"pane_id":`)
+		end := start
+		for end < len(search) && (search[end] >= '0' && search[end] <= '9') {
+			end++
+		}
+		if end > start {
+			last = search[start:end]
+		}
+		search = search[end:]
 	}
-	
+	if last != "" {
+		return last
+	}
+	return "0"
+}
+
+// parseListLastWindowAndPane parses wezterm list JSON and returns (windowID, paneID) of the LAST entry.
+// The last entry is typically our newly created window from wezterm start.
+func parseListLastWindowAndPane(jsonOutput string) (windowID, paneID string) {
+	var entries []weztermListEntry
+	if err := json.Unmarshal([]byte(jsonOutput), &entries); err != nil || len(entries) == 0 {
+		return "0", "0"
+	}
+	last := entries[len(entries)-1]
+	return fmt.Sprintf("%.0f", last.WindowID), fmt.Sprintf("%.0f", last.PaneID)
+}
+
+// GetFirstPaneID returns the first pane ID from any existing Wezterm window.
+// Used to spawn a new tab into the user's current window (e.g. after one service crashed).
+func GetFirstPaneID() (string, error) {
+	cmd := exec.Command("wezterm", "cli", "list", "--format", "json")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("wezterm not running or not available: %w", err)
+	}
+	paneID := extractFirstPaneID(string(output))
+	if paneID == "0" {
+		return "", fmt.Errorf("no wezterm panes found")
+	}
+	return paneID, nil
+}
+
+// SpawnTabInWindow spawns a new tab in a specific window. Prefer over SpawnTabInPane when we know the window.
+func SpawnTabInWindow(windowID string, title string, workDir string, command string, args []string) (string, error) {
+	wrappedCmd, wrappedArgs := wrapCommand(title, command, args)
+	cmdArgs := []string{"cli", "spawn", "--window-id", windowID}
 	if workDir != "" {
 		cmdArgs = append(cmdArgs, "--cwd", workDir)
 	}
-	
 	cmdArgs = append(cmdArgs, "--")
 	cmdArgs = append(cmdArgs, wrappedCmd)
 	cmdArgs = append(cmdArgs, wrappedArgs...)
 
-	// Retry logic - wezterm might not be fully ready
 	var lastErr error
 	for attempt := 0; attempt < 5; attempt++ {
 		cmd := exec.Command("wezterm", cmdArgs...)
 		output, err := cmd.Output()
 		if err == nil {
-			paneID := strings.TrimSpace(string(output))
-			w.paneIDs = append(w.paneIDs, paneID)
-			return paneID, nil
+			newPaneID := strings.TrimSpace(string(output))
+			setTabTitle(newPaneID, title)
+			return newPaneID, nil
 		}
 		lastErr = err
 		time.Sleep(500 * time.Millisecond)
 	}
-	return "", fmt.Errorf("failed to spawn wezterm tab after retries: %w", lastErr)
+	return "", fmt.Errorf("failed to spawn wezterm tab: %w", lastErr)
+}
+
+// SpawnTabInPane spawns a new tab in an existing Wezterm window by pane ID.
+// Use GetFirstPaneID() to get a pane when attaching to the current window.
+func SpawnTabInPane(anchorPaneID string, title string, workDir string, command string, args []string) (string, error) {
+	wrappedCmd, wrappedArgs := wrapCommand(title, command, args)
+	cmdArgs := []string{"cli", "spawn", "--pane-id", anchorPaneID}
+	if workDir != "" {
+		cmdArgs = append(cmdArgs, "--cwd", workDir)
+	}
+	cmdArgs = append(cmdArgs, "--")
+	cmdArgs = append(cmdArgs, wrappedCmd)
+	cmdArgs = append(cmdArgs, wrappedArgs...)
+
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		cmd := exec.Command("wezterm", cmdArgs...)
+		output, err := cmd.Output()
+		if err == nil {
+			newPaneID := strings.TrimSpace(string(output))
+			setTabTitle(newPaneID, title)
+			return newPaneID, nil
+		}
+		lastErr = err
+		time.Sleep(500 * time.Millisecond)
+	}
+	return "", fmt.Errorf("failed to spawn wezterm tab: %w", lastErr)
+}
+
+// SpawnTab spawns a new tab in the existing Wezterm window
+func (w *WeztermLauncher) SpawnTab(title string, workDir string, command string, args []string) (string, error) {
+	if w.firstPaneID == "" && w.firstWindowID == "" {
+		return "", fmt.Errorf("no anchor pane (start crux normally first, or use crux start-one with wezterm already open)")
+	}
+	var newPaneID string
+	var err error
+	if w.firstWindowID != "" && w.firstWindowID != "0" {
+		newPaneID, err = SpawnTabInWindow(w.firstWindowID, title, workDir, command, args)
+	} else {
+		newPaneID, err = SpawnTabInPane(w.firstPaneID, title, workDir, command, args)
+	}
+	if err != nil {
+		return "", err
+	}
+	w.paneIDs = append(w.paneIDs, newPaneID)
+	w.servicePanes[title] = newPaneID
+	return newPaneID, nil
 }
 
 // SpawnInPane spawns a command in a specific pane
@@ -254,21 +364,70 @@ func (w *WeztermLauncher) SpawnInPane(paneID string, command string, args []stri
 	return cmd.Run()
 }
 
+// SendTextToPane sends text to a pane (for API /send)
+func (w *WeztermLauncher) SendTextToPane(paneID string, text string) error {
+	cmd := exec.Command("wezterm", "cli", "send-text", "--pane-id", paneID, "--no-paste", text+"\n")
+	return cmd.Run()
+}
+
+// GetPaneScrollback returns the last N lines of scrollback from a pane
+func (w *WeztermLauncher) GetPaneScrollback(paneID string, lines int) (string, error) {
+	cmd := exec.Command("wezterm", "cli", "get-text", "--pane-id", paneID, "--start-line", fmt.Sprintf("%d", -lines))
+	output, err := cmd.Output()
+	return string(output), err
+}
+
+// GetServicePane returns pane ID for a service name (from session state)
+func (w *WeztermLauncher) GetServicePane(service string) string {
+	return w.servicePanes[service]
+}
+
 // FocusPane focuses a specific pane
 func (w *WeztermLauncher) FocusPane(paneID string) error {
 	cmd := exec.Command("wezterm", "cli", "activate-pane", "--pane-id", paneID)
 	return cmd.Run()
 }
 
-// ListPanes lists all panes in the current window
-func (w *WeztermLauncher) ListPanes() ([]string, error) {
+// PaneInfo holds pane data from wezterm list (for API/TabController)
+type PaneInfo struct {
+	Title   string
+	PaneID  string
+	LogDir  string
+	LogPath string
+}
+
+// ListPanesWithTitles returns panes with titles (refreshes from wezterm - no stale state)
+func (w *WeztermLauncher) ListPanesWithTitles() ([]PaneInfo, error) {
 	cmd := exec.Command("wezterm", "cli", "list", "--format", "json")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
-	// For now just return raw output - can parse JSON if needed
-	return []string{string(output)}, nil
+	var entries []struct {
+		PaneID    int    `json:"pane_id"`
+		Title     string `json:"title"`      // pane title (e.g. bash)
+		TabTitle  string `json:"tab_title"`  // tab title (service name from set-tab-title)
+	}
+	if err := json.Unmarshal(output, &entries); err != nil {
+		return nil, err
+	}
+	result := make([]PaneInfo, 0, len(entries))
+	for _, e := range entries {
+		name := e.TabTitle
+		if name == "" {
+			name = e.Title
+		}
+		if name == "" {
+			name = "unknown"
+		}
+		result = append(result, PaneInfo{
+			Title:   name,
+			PaneID:  fmt.Sprintf("%d", e.PaneID),
+			LogDir:  fmt.Sprintf("/tmp/crux-logs/%s", name),
+			LogPath: fmt.Sprintf("/tmp/crux-logs/%s/latest.log", name),
+		})
+	}
+	return result, nil
 }
 
 // GetPaneIDs returns tracked pane IDs

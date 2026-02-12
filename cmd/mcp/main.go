@@ -2,18 +2,20 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
 
-// MCP Server for Crux - controls services via Wezterm CLI
-// Protocol: JSON-RPC 2.0 over stdio
-// Uses wezterm cli commands directly - no pipes needed!
+// MCP Server for Crux - controls services via Crux API only.
+// MCP has no knowledge of wezterm or terminal - all control goes through crux.
+
+const defaultAPIURL = "http://localhost:9876"
 
 // JSON-RPC types
 type Request struct {
@@ -35,7 +37,6 @@ type RPCError struct {
 	Message string `json:"message"`
 }
 
-// MCP types
 type ServerInfo struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
@@ -92,17 +93,6 @@ type ContentItem struct {
 	Text string `json:"text"`
 }
 
-// Pane represents a Wezterm pane (terminal tab)
-type Pane struct {
-	WindowID  int
-	TabID     int
-	PaneID    int
-	Workspace string
-	Size      string
-	Title     string
-	CWD       string
-}
-
 func main() {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -123,102 +113,75 @@ func main() {
 	}
 }
 
+func getAPIURL() string {
+	if u := os.Getenv("CRUX_API_URL"); u != "" {
+		return u
+	}
+	return defaultAPIURL
+}
+
 func handleRequest(req Request) {
 	switch req.Method {
 	case "initialize":
 		result := InitializeResult{
 			ProtocolVersion: "2024-11-05",
-			Capabilities: ServerCapabilities{
-				Tools: &ToolsCapability{},
-			},
-			ServerInfo: ServerInfo{
-				Name:    "crux-mcp",
-				Version: "0.3.0",
-			},
+			Capabilities:    ServerCapabilities{Tools: &ToolsCapability{}},
+			ServerInfo:      ServerInfo{Name: "crux-mcp", Version: "0.4.0"},
 		}
 		sendResult(req.ID, result)
 
 	case "notifications/initialized":
-		// No response needed
+		// No response
 
 	case "tools/list":
 		tools := []Tool{
 			{
 				Name:        "crux_status",
-				Description: "List all running terminal tabs with their numbers and titles.",
-				InputSchema: InputSchema{
-					Type:       "object",
-					Properties: map[string]Property{},
-				},
+				Description: "List running service tabs. Requires crux to be running.",
+				InputSchema: InputSchema{Type: "object", Properties: map[string]Property{}},
 			},
 			{
 				Name:        "crux_send",
-				Description: "Send text/command to a terminal tab. For Flutter: 'r' = hot reload, 'R' = hot restart, 'q' = quit.",
+				Description: "Send text to a tab (e.g. 'r'=reload, 'R'=restart, 'q'=quit)",
 				InputSchema: InputSchema{
 					Type: "object",
 					Properties: map[string]Property{
-						"tab": {
-							Type:        "string",
-							Description: "Tab number (1, 2, 3...) or partial title match (e.g., 'backend', 'flutter')",
-						},
-						"text": {
-							Type:        "string",
-							Description: "Text to send (e.g., 'r' for reload, 'R' for restart, 'q' for quit)",
-						},
+						"tab":  {Type: "string", Description: "Service name or tab number"},
+						"text": {Type: "string", Description: "Text to send"},
 					},
 					Required: []string{"tab", "text"},
 				},
 			},
 			{
 				Name:        "crux_logs",
-				Description: "Get terminal output (scrollback) from a tab. Returns the last N lines.",
+				Description: "Get terminal scrollback from a tab",
 				InputSchema: InputSchema{
 					Type: "object",
 					Properties: map[string]Property{
-						"tab": {
-							Type:        "string",
-							Description: "Tab number (1, 2, 3...) or partial title match",
-						},
-						"lines": {
-							Type:        "string",
-							Description: "Number of lines to get from scrollback (default: 50)",
-						},
+						"tab":   {Type: "string", Description: "Service name or tab number"},
+						"lines": {Type: "string", Description: "Number of lines (default 50)"},
 					},
 					Required: []string{"tab"},
 				},
 			},
 			{
 				Name:        "crux_focus",
-				Description: "Focus/activate a specific terminal tab",
+				Description: "Focus/activate a tab",
 				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]Property{
-						"tab": {
-							Type:        "string",
-							Description: "Tab number (1, 2, 3...) or partial title match",
-						},
-					},
-					Required: []string{"tab"},
+					Type:       "object",
+					Properties: map[string]Property{"tab": {Type: "string", Description: "Service name or tab number"}},
+					Required:   []string{"tab"},
 				},
 			},
 			{
 				Name:        "crux_logfile",
-				Description: "Read log files for crashed/closed tabs. Logs saved to /tmp/crux-logs/<service>/<timestamp>.log. Each run creates a new timestamped log.",
+				Description: "Read log files for crashed/closed tabs. Logs at /tmp/crux-logs/<service>/",
 				InputSchema: InputSchema{
 					Type: "object",
 					Properties: map[string]Property{
-						"service": {
-							Type:        "string",
-							Description: "Service name (e.g., 'backend') or 'list' to show all services with logs",
-						},
-						"run": {
-							Type:        "string",
-							Description: "Which run to read: 'latest' (default), 'list' to show all runs, or timestamp like '2024-02-11_143022'",
-						},
-						"lines": {
-							Type:        "string",
-							Description: "Number of lines to read from end (default: 100)",
-						},
+						"service": {Type: "string", Description: "Service name or 'list' for all"},
+						"run":     {Type: "string", Description: "'latest', 'list', or timestamp"},
+						"lines":   {Type: "string", Description: "Lines to read (default 100)"},
 					},
 					Required: []string{"service"},
 				},
@@ -243,32 +206,32 @@ func handleToolCall(id interface{}, params CallToolParams) {
 	var result string
 	var isError bool
 
+	args := params.Arguments
+	if args == nil {
+		args = make(map[string]interface{})
+	}
+
 	switch params.Name {
 	case "crux_status":
-		result, isError = getStatus()
-
+		result, isError = apiGetTabs()
 	case "crux_send":
-		tab, _ := params.Arguments["tab"].(string)
-		text, _ := params.Arguments["text"].(string)
-		result, isError = sendToTab(tab, text)
-
+		tab, _ := args["tab"].(string)
+		text, _ := args["text"].(string)
+		result, isError = apiSend(tab, text)
 	case "crux_logs":
-		tab, _ := params.Arguments["tab"].(string)
-		lines, _ := params.Arguments["lines"].(string)
-		result, isError = getTabLogs(tab, lines)
-
+		tab, _ := args["tab"].(string)
+		lines, _ := args["lines"].(string)
+		result, isError = apiLogs(tab, lines)
 	case "crux_focus":
-		tab, _ := params.Arguments["tab"].(string)
-		result, isError = focusTab(tab)
-
+		tab, _ := args["tab"].(string)
+		result, isError = apiFocus(tab)
 	case "crux_logfile":
-		service, _ := params.Arguments["service"].(string)
-		run, _ := params.Arguments["run"].(string)
-		lines, _ := params.Arguments["lines"].(string)
-		result, isError = readLogFile(service, run, lines)
-
+		service, _ := args["service"].(string)
+		run, _ := args["run"].(string)
+		lines, _ := args["lines"].(string)
+		result, isError = apiLogfile(service, run, lines)
 	default:
-		result = fmt.Sprintf("Unknown tool: %s", params.Name)
+		result = "Unknown tool: " + params.Name
 		isError = true
 	}
 
@@ -278,333 +241,169 @@ func handleToolCall(id interface{}, params CallToolParams) {
 	})
 }
 
-// listPanes returns all wezterm panes
-func listPanes() ([]Pane, error) {
-	cmd := exec.Command("wezterm", "cli", "list")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("wezterm not running or not available: %v", err)
-	}
-
-	var panes []Pane
-	lines := strings.Split(string(output), "\n")
-
-	for i, line := range lines {
-		if i == 0 || strings.TrimSpace(line) == "" {
-			continue // skip header
-		}
-
-		fields := strings.Fields(line)
-		if len(fields) < 6 {
-			continue
-		}
-
-		winID, _ := strconv.Atoi(fields[0])
-		tabID, _ := strconv.Atoi(fields[1])
-		paneID, _ := strconv.Atoi(fields[2])
-
-		// Title might have spaces, get everything after size
-		title := ""
-		cwd := ""
-		if len(fields) >= 6 {
-			title = fields[5]
-		}
-		if len(fields) >= 7 {
-			cwd = fields[6]
-		}
-
-		panes = append(panes, Pane{
-			WindowID:  winID,
-			TabID:     tabID,
-			PaneID:    paneID,
-			Workspace: fields[3],
-			Size:      fields[4],
-			Title:     title,
-			CWD:       cwd,
-		})
-	}
-
-	return panes, nil
-}
-
-// findTab finds a pane by 1-based tab number or title match
-// User provides 1, 2, 3 but internally we use 0-based pane IDs
-func findTab(tabRef string) (*Pane, int, error) {
-	panes, err := listPanes()
-	if err != nil {
-		return nil, 0, err
-	}
-
-	if len(panes) == 0 {
-		return nil, 0, fmt.Errorf("no wezterm tabs found")
-	}
-
-	// Try numeric tab number first (1-based input -> convert to index)
-	if tabNum, err := strconv.Atoi(tabRef); err == nil && tabNum >= 1 {
-		idx := tabNum - 1 // Convert to 0-based index
-		if idx < len(panes) {
-			return &panes[idx], tabNum, nil
-		}
-	}
-
-	// Try title match (case-insensitive, partial)
-	tabRefLower := strings.ToLower(tabRef)
-	for i, p := range panes {
-		if strings.Contains(strings.ToLower(p.Title), tabRefLower) {
-			return &p, i + 1, nil // Return 1-based tab number
-		}
-	}
-
-	// List available tabs
-	var names []string
-	for i, p := range panes {
-		names = append(names, fmt.Sprintf("%d:%s", i+1, p.Title))
-	}
-	return nil, 0, fmt.Errorf("tab '%s' not found. Available: %v", tabRef, names)
-}
-
-func getStatus() (string, bool) {
-	panes, err := listPanes()
-	if err != nil {
-		return fmt.Sprintf("Error: %v", err), true
-	}
-
-	if len(panes) == 0 {
-		return "No wezterm tabs found. Is wezterm running?", true
-	}
-
-	var result strings.Builder
-	result.WriteString("Wezterm Tabs\n")
-	result.WriteString("============\n\n")
-
-	for i, p := range panes {
-		tabNum := i + 1 // 1-based for display
-		result.WriteString(fmt.Sprintf("Tab %d: %s\n", tabNum, p.Title))
-		result.WriteString(fmt.Sprintf("  Size: %s\n", p.Size))
-		if p.CWD != "" {
-			result.WriteString(fmt.Sprintf("  CWD: %s\n", p.CWD))
-		}
-		result.WriteString("\n")
-	}
-
-	result.WriteString("Commands:\n")
-	result.WriteString("  r = hot reload (Flutter)\n")
-	result.WriteString("  R = hot restart (Flutter)\n")
-	result.WriteString("  q = quit\n")
-
-	return result.String(), false
-}
-
-func sendToTab(tabRef string, text string) (string, bool) {
-	pane, tabNum, err := findTab(tabRef)
-	if err != nil {
-		return fmt.Sprintf("Error: %v", err), true
-	}
-
-	cmd := exec.Command("wezterm", "cli", "send-text",
-		"--pane-id", strconv.Itoa(pane.PaneID),
-		"--no-paste",
-		text)
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Sprintf("Failed to send to tab %d: %v", tabNum, err), true
-	}
-
-	return fmt.Sprintf("Sent '%s' to tab %d (%s)", text, tabNum, pane.Title), false
-}
-
-func getTabLogs(tabRef string, lines string) (string, bool) {
-	pane, tabNum, err := findTab(tabRef)
-	if err != nil {
-		return fmt.Sprintf("Error: %v", err), true
-	}
-
-	numLines := 50
-	if n, err := strconv.Atoi(lines); err == nil && n > 0 {
-		numLines = n
-	}
-	if numLines > 1000 {
-		numLines = 1000
-	}
-
-	// Get scrollback - negative start-line means scrollback
-	cmd := exec.Command("wezterm", "cli", "get-text",
-		"--pane-id", strconv.Itoa(pane.PaneID),
-		"--start-line", strconv.Itoa(-numLines))
-
-	output, err := cmd.Output()
-	if err != nil {
-		return fmt.Sprintf("Failed to get text from tab %d: %v", tabNum, err), true
-	}
-
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("=== Tab %d: %s (last %d lines) ===\n\n", tabNum, pane.Title, numLines))
-	result.Write(output)
-
-	return result.String(), false
-}
-
-func focusTab(tabRef string) (string, bool) {
-	pane, tabNum, err := findTab(tabRef)
-	if err != nil {
-		return fmt.Sprintf("Error: %v", err), true
-	}
-
-	cmd := exec.Command("wezterm", "cli", "activate-pane",
-		"--pane-id", strconv.Itoa(pane.PaneID))
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Sprintf("Failed to focus tab %d: %v", tabNum, err), true
-	}
-
-	// Also activate the wezterm window
-	exec.Command("osascript", "-e", `tell application "WezTerm" to activate`).Run()
-
-	return fmt.Sprintf("Focused tab %d (%s)", tabNum, pane.Title), false
-}
-
-func readLogFile(service string, run string, linesArg string) (string, bool) {
-	baseDir := "/tmp/crux-logs"
-	
-	// List all services with logs
-	if service == "list" || service == "" {
-		entries, err := os.ReadDir(baseDir)
-		if err != nil || len(entries) == 0 {
-			return "No crux logs found. Logs are created when you run 'crux'.\nLocation: /tmp/crux-logs/<service>/<timestamp>.log", true
-		}
-		
-		var result strings.Builder
-		result.WriteString("=== Crux Log History ===\n\n")
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			svcName := entry.Name()
-			svcDir := filepath.Join(baseDir, svcName)
-			
-			// Count log files and get latest
-			logs, _ := filepath.Glob(filepath.Join(svcDir, "*.log"))
-			// Filter out latest.log symlink
-			var realLogs []string
-			for _, l := range logs {
-				if filepath.Base(l) != "latest.log" {
-					realLogs = append(realLogs, l)
-				}
-			}
-			
-			if len(realLogs) > 0 {
-				// Get info on latest
-				latestPath := filepath.Join(svcDir, "latest.log")
-				info, _ := os.Stat(latestPath)
-				if info != nil {
-					result.WriteString(fmt.Sprintf("  %s: %d runs, latest: %s (%.1f KB)\n",
-						svcName, len(realLogs), info.ModTime().Format("2006-01-02 15:04:05"), float64(info.Size())/1024))
-				} else {
-					result.WriteString(fmt.Sprintf("  %s: %d runs\n", svcName, len(realLogs)))
-				}
-			}
-		}
-		result.WriteString("\nUsage:\n")
-		result.WriteString("  crux_logfile service=\"backend\"           - read latest run\n")
-		result.WriteString("  crux_logfile service=\"backend\" run=\"list\" - list all runs\n")
-		result.WriteString("  crux_logfile service=\"backend\" run=\"2024-02-11_143022\" - specific run\n")
-		return result.String(), false
-	}
-	
-	svcDir := filepath.Join(baseDir, service)
-	
-	// Check service exists
-	if _, err := os.Stat(svcDir); os.IsNotExist(err) {
-		return fmt.Sprintf("No logs for service '%s'.\nUse crux_logfile service=\"list\" to see available services.", service), true
-	}
-	
-	// List runs for this service
-	if run == "list" {
-		logs, _ := filepath.Glob(filepath.Join(svcDir, "*.log"))
-		var realLogs []string
-		for _, l := range logs {
-			if filepath.Base(l) != "latest.log" {
-				realLogs = append(realLogs, l)
-			}
-		}
-		
-		if len(realLogs) == 0 {
-			return fmt.Sprintf("No log files found for service '%s'.", service), true
-		}
-		
-		var result strings.Builder
-		result.WriteString(fmt.Sprintf("=== Runs for %s (%d total) ===\n\n", service, len(realLogs)))
-		
-		// Sort by name (timestamp) descending
-		for i := len(realLogs) - 1; i >= 0; i-- {
-			l := realLogs[i]
-			name := filepath.Base(l)
-			timestamp := strings.TrimSuffix(name, ".log")
-			info, _ := os.Stat(l)
-			if info != nil {
-				result.WriteString(fmt.Sprintf("  %s (%.1f KB)\n", timestamp, float64(info.Size())/1024))
-			} else {
-				result.WriteString(fmt.Sprintf("  %s\n", timestamp))
-			}
-		}
-		result.WriteString(fmt.Sprintf("\nUse crux_logfile service=\"%s\" run=\"<timestamp>\" to read a specific run.", service))
-		return result.String(), false
-	}
-	
-	// Determine which log file to read
-	var logPath string
-	if run == "" || run == "latest" {
-		logPath = filepath.Join(svcDir, "latest.log")
+func apiRequest(method, path string, body []byte) (*http.Response, error) {
+	url := getAPIURL() + path
+	var req *http.Request
+	var err error
+	if body != nil {
+		req, err = http.NewRequest(method, url, bytes.NewReader(body))
 	} else {
-		// Specific timestamp
-		logPath = filepath.Join(svcDir, run+".log")
+		req, err = http.NewRequest(method, url, nil)
 	}
-	
-	content, err := os.ReadFile(logPath)
 	if err != nil {
-		return fmt.Sprintf("Log file not found: %s\nUse crux_logfile service=\"%s\" run=\"list\" to see available runs.", logPath, service), true
+		return nil, err
 	}
-	
-	// Get last N lines
-	numLines := 100
-	if n, err := strconv.Atoi(linesArg); err == nil && n > 0 {
-		numLines = n
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
-	
-	lines := strings.Split(string(content), "\n")
-	start := len(lines) - numLines
-	if start < 0 {
-		start = 0
+	return http.DefaultClient.Do(req)
+}
+
+func apiGet(path string) (string, error) {
+	resp, err := apiRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return "", err
 	}
-	
-	runLabel := run
-	if runLabel == "" || runLabel == "latest" {
-		runLabel = "latest"
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("API %s: %s", resp.Status, strings.TrimSpace(string(data)))
 	}
-	
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("=== %s / %s (last %d lines) ===\n\n", service, runLabel, numLines))
-	result.WriteString(strings.Join(lines[start:], "\n"))
-	
-	return result.String(), false
+	return string(data), nil
+}
+
+func apiPost(path string, body interface{}) (string, error) {
+	var b []byte
+	if body != nil {
+		b, _ = json.Marshal(body)
+	}
+	resp, err := apiRequest(http.MethodPost, path, b)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		return "", fmt.Errorf("API %s: %s", resp.Status, strings.TrimSpace(string(data)))
+	}
+	return string(data), nil
+}
+
+func apiGetTabs() (string, bool) {
+	data, err := apiGet("/tabs")
+	if err != nil {
+		return "Crux API not available. Is crux running? " + err.Error(), true
+	}
+	var out struct {
+		Tabs   []struct {
+			Name    string `json:"name"`
+			LogPath string `json:"log_path"`
+		} `json:"tabs"`
+		Uptime string `json:"uptime"`
+	}
+	if err := json.Unmarshal([]byte(data), &out); err != nil {
+		return "Failed to parse API response: " + data, true
+	}
+	if len(out.Tabs) == 0 {
+		return "No tabs. Run 'crux' to start services.", false
+	}
+	var b strings.Builder
+	b.WriteString("Crux Tabs\n")
+	b.WriteString("=========\n\n")
+	for i, t := range out.Tabs {
+		b.WriteString(fmt.Sprintf("Tab %d: %s\n", i+1, t.Name))
+		b.WriteString(fmt.Sprintf("  Log: %s\n\n", t.LogPath))
+	}
+	b.WriteString("Commands: r=reload, R=restart, q=quit\n")
+	return b.String(), false
+}
+
+func resolveTabRef(tabRef string) (string, error) {
+	// Try numeric (1-based tab number)
+	if idx, err := strconv.Atoi(tabRef); err == nil && idx >= 1 {
+		data, err := apiGet("/tabs")
+		if err != nil {
+			return "", err
+		}
+		var out struct {
+			Tabs []struct{ Name string } `json:"tabs"`
+		}
+		if err := json.Unmarshal([]byte(data), &out); err != nil {
+			return "", err
+		}
+		if idx <= len(out.Tabs) {
+			return out.Tabs[idx-1].Name, nil
+		}
+	}
+	return tabRef, nil // use as service name
+}
+
+func apiSend(tab, text string) (string, bool) {
+	service, err := resolveTabRef(tab)
+	if err != nil {
+		return "Failed: " + err.Error(), true
+	}
+	_, err = apiPost("/send/"+service, map[string]string{"text": text})
+	if err != nil {
+		return "Failed: " + err.Error(), true
+	}
+	return fmt.Sprintf("Sent '%s' to %s", text, service), false
+}
+
+func apiLogs(tab, lines string) (string, bool) {
+	service, err := resolveTabRef(tab)
+	if err != nil {
+		return "Failed: " + err.Error(), true
+	}
+	path := "/logs/" + service
+	if lines != "" {
+		path += "?lines=" + lines
+	}
+	data, err := apiGet(path)
+	if err != nil {
+		return "Failed: " + err.Error(), true
+	}
+	return fmt.Sprintf("=== %s (scrollback) ===\n\n%s", service, data), false
+}
+
+func apiFocus(tab string) (string, bool) {
+	service, err := resolveTabRef(tab)
+	if err != nil {
+		return "Failed: " + err.Error(), true
+	}
+	_, err = apiPost("/focus/"+service, nil)
+	if err != nil {
+		return "Failed: " + err.Error(), true
+	}
+	return "Focused " + service, false
+}
+
+func apiLogfile(service, run, lines string) (string, bool) {
+	if run == "" {
+		run = "latest"
+	}
+	path := "/logfile/" + service + "?run=" + run
+	if lines != "" {
+		path += "&lines=" + lines
+	}
+	data, err := apiGet(path)
+	if err != nil {
+		return "Failed: " + err.Error(), true
+	}
+	if service == "list" || service == "" {
+		return data, false
+	}
+	return fmt.Sprintf("=== %s / %s ===\n\n%s", service, run, data), false
 }
 
 func sendResult(id interface{}, result interface{}) {
-	resp := Response{
-		JSONRPC: "2.0",
-		ID:      id,
-		Result:  result,
-	}
+	resp := Response{JSONRPC: "2.0", ID: id, Result: result}
 	output, _ := json.Marshal(resp)
 	fmt.Println(string(output))
 }
 
 func sendError(id interface{}, code int, message string) {
-	resp := Response{
-		JSONRPC: "2.0",
-		ID:      id,
-		Error:   &RPCError{Code: code, Message: message},
-	}
+	resp := Response{JSONRPC: "2.0", ID: id, Error: &RPCError{Code: code, Message: message}}
 	output, _ := json.Marshal(resp)
 	fmt.Println(string(output))
 }

@@ -19,4 +19,6 @@ type TabController interface {
 	GetLogs(service string, lines int) (string, error)
 	// Focus activates a tab
 	Focus(service string) error
+	// SpawnTab starts a new tab in the current session (e.g. after a service crashed)
+	SpawnTab(title, workDir, command string, args []string) error
 }

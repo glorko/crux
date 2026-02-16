@@ -239,7 +239,33 @@ func runWithWezterm(cfg *PlaygroundConfig) {
 
 	// Start API server for MCP (MCP calls crux API, not wezterm)
 	apiServer := api.NewServer(cfg.API.Port)
-	apiServer.SetTabController(newWeztermTabController(wez))
+	tc := newWeztermTabController(wez)
+	apiServer.SetTabController(tc)
+	apiServer.SetStartOneHandler(func(serviceName string) (string, error) {
+		var svc *ServiceConfig
+		for i := range cfg.Services {
+			if cfg.Services[i].Name == serviceName {
+				svc = &cfg.Services[i]
+				break
+			}
+		}
+		if svc == nil {
+			var names []string
+			for _, s := range cfg.Services {
+				names = append(names, s.Name)
+			}
+			return "", fmt.Errorf("service %q not found (available: %s)", serviceName, strings.Join(names, ", "))
+		}
+		cwd, _ := os.Getwd()
+		workDir := svc.WorkDir
+		if workDir == "" {
+			workDir = cwd
+		}
+		if err := tc.SpawnTab(svc.Name, workDir, svc.Command, svc.ExpandArgs()); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Started %s in new tab", svc.Name), nil
+	})
 	apiServer.SetOnShutdown(func() {
 		wez.Cleanup()
 		os.Exit(0)
@@ -499,14 +525,33 @@ If not found, tell the user:
   "crux-mcp is not installed. Run ./install.sh in the crux repo.
    
    Then add to Cursor MCP config:
-   {\"mcpServers\":{\"crux\":{\"command\":\"${HOME}/bin/crux-mcp\",\"args\":[]}}}"
+   {\"mcpServers\":{\"crux\":{\"command\":\"${userHome}/bin/crux-mcp\",\"args\":[]}}}"
 
-## Step 3: Analyze this project
-Look at the project structure to identify:
-- Backend services (Go, Python, Node.js, etc.)
-- Mobile apps (Flutter, React Native, iOS, Android)
-- Web apps (React, Vue, etc.)
-- Existing run scripts (run.sh, Makefile, package.json scripts)
+## Step 3: Analyze this project - USE EXISTING SCRIPTS, DO NOT GUESS
+
+CRITICAL: Do NOT guess commands like "go run ./cmd/server" or "react-native run". 
+You MUST find and use the project's actual run scripts. Read files, don't assume.
+
+For each service, look for and USE (in order of priority):
+1. scripts/ folder - start.sh, run.sh, dev.sh, scripts/start-backend.sh, etc.
+2. Makefile - targets like "run", "start", "dev", "backend"
+3. package.json "scripts" - "start", "dev", "run:ios", "run:android", "run:web", etc.
+4. docker-compose.yml - services and how they're started
+5. README or docs - often document the exact run commands
+
+Backend: Look for scripts/run.sh, Make run, npm run dev - NOT "go run" unless that's what the script uses.
+React Native: Almost always uses package.json scripts (npm run ios, yarn android, etc.) - NOT "react-native run" directly.
+Flutter: Uses flutter run -d <device> but check if there's a wrapper script first.
+
+WRONG: guessing "go run ./cmd/server" when project has scripts/start-backend.sh
+RIGHT: command: ./scripts/start-backend.sh  workdir: ./
+WRONG: guessing "react-native run" for a React Native app
+RIGHT: command: npm  args: ["run", "ios"]  (or whatever package.json "scripts" actually defines)
+
+Identify:
+- Backend services (Go, Python, Node.js, etc.) - and which script starts each
+- Mobile apps (Flutter, React Native) - and their actual run commands from package.json/scripts
+- Web apps (React, Vue, etc.) - usually npm run dev / yarn dev
 
 ## Step 3a: Backend infrastructure dependencies
 Check if project needs databases/caches. Ask user: "Are postgres/redis/mongo already running, or should crux start them?"
@@ -547,14 +592,18 @@ For Android: run "flutter devices" (after emulator starts)
 - If no emulators, tell user to create AVD in Android Studio
 
 ## Step 4: Create config.yaml
-Create a config.yaml in the project root with:
+Create a config.yaml using the ACTUAL commands you found (from scripts, Makefile, package.json).
 - One service entry per runnable component
-- Correct commands and arguments
-- Working directories relative to config.yaml
+- command/args = what the project's scripts use, e.g.:
+  - Script: command: ./scripts/start-backend.sh  (or /bin/bash -c "./scripts/start-backend.sh")
+  - Makefile: command: make  args: ["run"]
+  - package.json: command: npm  args: ["run", "dev"]  (use the exact script name)
+  - React Native: command: npm  args: ["run", "ios"]  (or "run:ios", whatever package.json has)
+- Working directories relative to config.yaml (where the script/command runs from)
 - terminal.app set to wezterm
 
 Run: crux --help
-to see the exact config format and examples.
+to see the exact config format.
 
 ## Step 5: Run crux
 Run: crux
@@ -580,6 +629,10 @@ crux_focus
   - tab: Tab number or partial name
   - Action: Brings that tab to front in Wezterm
 
+crux_start_one
+  - service: Service name from config (e.g. backend, flutter-ios)
+  - Action: Start that service in a new tab (or new window). Use when a service crashed.
+
 crux_logfile
   - service: Service name ("backend") or "list" to see all services with logs
   - run: "latest" (default), "list" to show run history, or timestamp like "2024-02-11_143022"
@@ -603,7 +656,10 @@ Examples:
 - "Read this morning's run" -> crux_logfile service="backend" run="2024-02-11_090000"
 
 ## Notes
-- For Python projects with venv, use a shell script (./run.sh) as the command
+- NEVER guess: "go run", "react-native run", "python main.py" - always read scripts/package.json/Makefile first
+- If a service has scripts/start.sh or similar, use it: command: ./scripts/start.sh
+- For Python with venv, use the project's run script (./run.sh, Makefile, etc.)
+- For React Native, use package.json scripts (npm run ios, yarn android) - not react-native CLI directly
 - For Flutter, you need actual device IDs:
   - iOS: Get UUID with "xcrun simctl list devices"
   - Android: Start emulator first, then get ID from "flutter devices"
@@ -702,14 +758,15 @@ MCP INTEGRATION:
       go build -o ~/bin/crux-mcp ./cmd/mcp
 
     Add to Cursor MCP config:
-      {"mcpServers":{"crux":{"command":"${HOME}/bin/crux-mcp","args":[]}}}
+      {"mcpServers":{"crux":{"command":"${userHome}/bin/crux-mcp","args":[]}}}
 
     Available MCP tools:
-      crux_status  - List all terminal tabs
-      crux_send    - Send commands to tabs (r=reload, R=restart, q=quit)
-      crux_logs    - Get live terminal output from running tabs
-      crux_focus   - Focus a specific tab
-      crux_logfile - Read log history for crashed/closed tabs
+      crux_status   - List all terminal tabs
+      crux_send     - Send commands to tabs (r=reload, R=restart, q=quit)
+      crux_logs     - Get live terminal output from running tabs
+      crux_focus    - Focus a specific tab
+      crux_start_one - Start one service in new tab (same session, after crash)
+      crux_logfile  - Read log history for crashed/closed tabs
                      Logs: /tmp/crux-logs/<service>/<timestamp>.log
 
 MORE INFO:

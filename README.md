@@ -94,12 +94,14 @@ Add to your Cursor MCP config (`~/.cursor/mcp.json` or Cursor Settings > MCP):
 {
   "mcpServers": {
     "crux": {
-      "command": "${HOME}/bin/crux-mcp",
+      "command": "${userHome}/bin/crux-mcp",
       "args": []
     }
   }
 }
 ```
+
+> **Note:** Use `${userHome}`, not `${HOME}` - Cursor only expands `${userHome}`.
 
 Restart Cursor after adding.
 
@@ -341,6 +343,7 @@ The MCP server lets AI assistants:
 | `crux_send` | Send text/commands to a tab (e.g., `r` for hot reload, `R` for restart, `q` for quit) |
 | `crux_logs` | Get terminal scrollback from a tab (last N lines) |
 | `crux_focus` | Focus/activate a specific tab in Wezterm |
+| `crux_start_one` | Start a single service (new tab, or new window in some cases). Use when a service crashed |
 | `crux_logfile` | Read log files for crashed/closed tabs. Each run creates timestamped log in `/tmp/crux-logs/<service>/` |
 
 ### Tool Parameters
@@ -355,6 +358,11 @@ The MCP server lets AI assistants:
 
 **crux_focus**
 - `tab` - Tab number or partial title match
+
+**crux_start_one**
+- `service` - Service name from config (e.g. "backend", "flutter-ios")
+- May open a new tab in same window, or a new window, depending on session state
+- Note: May open a new Wezterm window depending on session state; new tab in same window when possible
 
 **crux_logfile**
 - `service` - Service name (e.g., "backend") or "list" to show all services with logs
@@ -403,6 +411,7 @@ Ask Cursor:
 - "Hot restart the consumer app" (sends "R")
 - "Show me the backend logs" (uses crux_logs for live output)
 - "Focus the backend tab" (activates tab in Wezterm)
+- "Restart the backend" (uses crux_start_one to spawn in new tab)
 - "The backend crashed, what happened?" (uses crux_logfile for crash logs)
 - "What services have logs?" (crux_logfile with service="list")
 - "Show me previous backend runs" (crux_logfile with service="backend", run="list")
@@ -421,15 +430,18 @@ Ask Cursor:
         │              │              │             │
         └──────────────┴──────────────┴─────────────┘
                               │
-                     wezterm cli (spawn, send-text, get-text)
+                     wezterm cli (crux owns this)
                               │
                       ┌───────┴───────┐
-                      │   crux-mcp    │
-                      │    server     │
+                      │     crux      │  ← API server (localhost:9876)
+                      │  + API server │
                       └───────┬───────┘
+                              │ HTTP (tabs, send, logs, focus)
                               │
-                        JSON-RPC (stdio)
-                              │
+                      ┌───────┴───────┐
+                      │   crux-mcp    │  ← MCP server (no wezterm knowledge)
+                      └───────┬───────┘
+                              │ JSON-RPC (stdio)
                       ┌───────┴───────┐
                       │    Cursor     │
                       │   (LLM/AI)    │
@@ -437,15 +449,9 @@ Ask Cursor:
 ```
 
 **How it works:**
-1. `crux` reads `config.yaml` and spawns Wezterm with tabs for each service
-2. `crux-mcp` uses `wezterm cli` to control tabs (no separate API needed)
-3. Cursor calls MCP tools which execute `wezterm cli` commands
-
-## Logs
-
-Logs are read directly from terminal scrollback via `wezterm cli get-text`. No log files needed!
-
-Access via MCP: "show me the backend logs" or "get logs from tab 2"
+1. `crux` reads `config.yaml`, spawns Wezterm tabs, and runs an HTTP API server
+2. `crux-mcp` talks to crux's API only (no direct wezterm access)
+3. Cursor calls MCP tools → crux-mcp → crux API → wezterm
 
 ## Examples
 
@@ -548,10 +554,11 @@ cd ./backend && go run ./cmd/server
 
 ### MCP not connecting
 
-1. Ensure Wezterm is running with crux tabs (run `crux` first)
+1. Ensure crux is running with tabs (run `crux` first - it starts the API server)
 2. Check crux-mcp is built: `ls ~/bin/crux-mcp`
-3. Restart Cursor after updating mcp.json
-4. Test manually: `echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | ~/bin/crux-mcp`
+3. Use `${userHome}/bin/crux-mcp` in mcp.json - Cursor does **not** expand `${HOME}` (ENOENT error)
+4. Restart Cursor after updating mcp.json
+5. Test manually: `echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | ~/bin/crux-mcp`
 
 ## Version
 

@@ -62,6 +62,11 @@ func (c *weztermTabController) Focus(service string) error {
 	return c.launcher.ActivateWindow()
 }
 
+func (c *weztermTabController) SpawnTab(title, workDir, command string, args []string) error {
+	_, err := c.launcher.SpawnTab(title, workDir, command, args)
+	return err
+}
+
 func (c *weztermTabController) resolvePane(service string) string {
 	// Try stored map first (fast path)
 	if id := c.launcher.GetServicePane(service); id != "" {

@@ -57,15 +57,20 @@ func (w *SimpleWorker) SendCommand(cmd string) error {
 	return SendCommandToPipe(w.PipePath, cmd)
 }
 
+// StartOneHandler is called to start a single service in the current session.
+// Returns message on success, error on failure.
+type StartOneHandler func(serviceName string) (string, error)
+
 // Server is the HTTP API server for crux control
 type Server struct {
-	port         int
-	workers      []Worker
-	tabCtrl      TabController // for Wezterm mode - MCP uses this via API
-	startTime    time.Time
-	mu           sync.RWMutex
-	server       *http.Server
-	onShutdown   func() // callback when shutdown is requested
+	port           int
+	workers        []Worker
+	tabCtrl        TabController // for Wezterm mode - MCP uses this via API
+	startOneHdl    StartOneHandler
+	startTime      time.Time
+	mu             sync.RWMutex
+	server         *http.Server
+	onShutdown     func() // callback when shutdown is requested
 }
 
 // NewServer creates a new API server
@@ -96,6 +101,13 @@ func (s *Server) SetTabController(tc TabController) {
 	s.tabCtrl = tc
 }
 
+// SetStartOneHandler sets the handler for starting a single service in the current session
+func (s *Server) SetStartOneHandler(fn StartOneHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.startOneHdl = fn
+}
+
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
@@ -124,6 +136,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/logs/", s.handleLogs)
 	mux.HandleFunc("/logfile/", s.handleLogfile)
 	mux.HandleFunc("/focus/", s.handleFocus)
+	mux.HandleFunc("/start-one/", s.handleStartOne)
 
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.port),
@@ -378,6 +391,34 @@ func (s *Server) handleFocus(w http.ResponseWriter, r *http.Request) {
 	}
 	err := tc.Focus(service)
 	resp := CommandResponse{Success: err == nil, Service: service, Message: "Focused"}
+	if err != nil {
+		resp.Message = err.Error()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleStartOne(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	service := strings.TrimPrefix(r.URL.Path, "/start-one/")
+	service = strings.TrimSuffix(service, "/")
+	service = strings.TrimSpace(service)
+	if service == "" {
+		http.Error(w, "Service name required", http.StatusBadRequest)
+		return
+	}
+	s.mu.RLock()
+	fn := s.startOneHdl
+	s.mu.RUnlock()
+	if fn == nil {
+		http.Error(w, "Start-one not available (crux must be running with wezterm)", http.StatusServiceUnavailable)
+		return
+	}
+	msg, err := fn(service)
+	resp := CommandResponse{Success: err == nil, Service: service, Message: msg}
 	if err != nil {
 		resp.Message = err.Error()
 	}

@@ -174,6 +174,15 @@ func handleRequest(req Request) {
 				},
 			},
 			{
+				Name:        "crux_start_one",
+				Description: "Start a single service (new tab or window). Use when a service crashed and you want to restart just that one.",
+				InputSchema: InputSchema{
+					Type:       "object",
+					Properties: map[string]Property{"service": {Type: "string", Description: "Service name from config (e.g. backend, flutter-ios)"}},
+					Required:   []string{"service"},
+				},
+			},
+			{
 				Name:        "crux_logfile",
 				Description: "Read log files for crashed/closed tabs. Logs at /tmp/crux-logs/<service>/",
 				InputSchema: InputSchema{
@@ -225,6 +234,9 @@ func handleToolCall(id interface{}, params CallToolParams) {
 	case "crux_focus":
 		tab, _ := args["tab"].(string)
 		result, isError = apiFocus(tab)
+	case "crux_start_one":
+		service, _ := args["service"].(string)
+		result, isError = apiStartOne(service)
 	case "crux_logfile":
 		service, _ := args["service"].(string)
 		run, _ := args["run"].(string)
@@ -376,6 +388,27 @@ func apiFocus(tab string) (string, bool) {
 		return "Failed: " + err.Error(), true
 	}
 	return "Focused " + service, false
+}
+
+func apiStartOne(service string) (string, bool) {
+	if service == "" {
+		return "Service name required", true
+	}
+	data, err := apiPost("/start-one/"+service, nil)
+	if err != nil {
+		return "Failed: " + err.Error(), true
+	}
+	var out struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(data), &out); err != nil {
+		return data, false
+	}
+	if !out.Success {
+		return "Failed: " + out.Message, true
+	}
+	return out.Message, false
 }
 
 func apiLogfile(service, run, lines string) (string, bool) {

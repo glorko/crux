@@ -9,6 +9,7 @@ playground
 testdata/mock_backend
 testdata/mock_flutter
 install-crux
+install
 
 # Test binary, built with `go test -c`
 *.test

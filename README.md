@@ -61,32 +61,30 @@ Wezterm is the only supported terminal — native tabs, MCP integration, and `st
 brew install --cask wezterm
 ```
 
-### 2. Build and install crux
+### 2. Install crux — Homebrew or manual
+
+**Homebrew**
 
 ```bash
-# Clone the repo
+brew tap glorko/crux
+brew install crux
+```
+
+**Manual (build from source)**
+
+```bash
 git clone https://github.com/glorko/crux.git
 cd crux
-
-# Install both crux and crux-mcp
 ./install.sh
 ```
 
-This installs:
-- `crux` → `~/go/bin/crux`
-- `crux-mcp` → `~/bin/crux-mcp`
-
-### 3. Add to PATH
-
-Add to your `~/.zshrc` or `~/.bashrc`:
+This puts `crux` in `~/go/bin` and `crux-mcp` in `~/bin`. Add to PATH if needed:
 
 ```bash
 export PATH="$PATH:$HOME/go/bin:$HOME/bin"
 ```
 
-Then reload: `source ~/.zshrc`
-
-### 4. Configure MCP for Cursor (optional but recommended)
+### 3. Configure MCP for Cursor (optional but recommended)
 
 Add to your Cursor MCP config (`~/.cursor/mcp.json` or Cursor Settings > MCP):
 

@@ -1,0 +1,22 @@
+# Crux playground config - mock project inside crux repo (for testing crux itself)
+# Run: ./playground -c config.playground.yaml
+
+services:
+  - name: mock-a
+    command: bash
+    args: ["-c", "exec ./run.sh mock-a"]
+    workdir: playground_mock
+  - name: mock-b
+    command: bash
+    args: ["-c", "exec ./run.sh mock-b"]
+    workdir: playground_mock
+  - name: mock-c
+    command: bash
+    args: ["-c", "exec ./run.sh mock-c"]
+    workdir: playground_mock
+
+terminal:
+  app: wezterm
+
+api:
+  port: 9876

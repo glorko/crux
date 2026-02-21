@@ -1,6 +1,10 @@
 # Crux - AI-Native Dev Environment Orchestrator
 
-**For agentic engineers and vibe coders** - One command to rule your local dev stack.
+**For agentic engineers and vibe coders** — one command to run your local dev stack and see what’s going on.
+
+Holding a local environment together with agentic tools is still painful: when you drive execution you waste time on terminal commands; when Cursor or Claude drive it you can’t read logs or see what’s happening. Crux is an AI-optimized launcher for your local environment. You get an LLM to generate a `config.yaml`, run `crux`, and your backend, frontend, mobile apps and dependencies start in Wezterm tabs — with logs you can read. The important part: Crux has built-in MCP, so your AI has full access to the same execution lifecycle. Ask it to read logs, restart a service, or send a hot-reload key to your Flutter app.
+
+> **Tested on macOS.** Wezterm is cross-platform; contributions welcome to make it work smoothly on Linux.
 
 ## The Dream
 
@@ -10,7 +14,7 @@
 4. Run `crux`
 5. Your multi-repo app is running with all services, databases, and emulators
 
-**That's it.** The prompt teaches your AI how crux works, it reads your project, generates the config, and crux handles the rest.
+**That's it.** The prompt teaches your AI how crux works, it reads your project, generates the config, and crux handles the rest. If LLM misunderstood your setup - you may ask to make tweaks in the config. 
 
 ## Reality Check
 
@@ -19,8 +23,6 @@ This works great for many setups, but if something doesn't work for your archite
 - **Ping me directly** - [t.me/glorfindeil](https://t.me/glorfindeil)
 
 More architectures and platforms coming soon!
-
-> **Tested on macOS** - May work on Linux (Wezterm is cross-platform). Windows might work with WSL/Git Bash + Wezterm (untested).
 
 ## What Crux Does
 
@@ -39,11 +41,11 @@ Crux spawns each service in its own terminal tab, giving you full interactive co
 
 ### Terminal (Wezterm only)
 
-| Terminal | Install |
-|----------|---------|
-| **Wezterm** | `brew install --cask wezterm` |
+| Terminal | Install | Tab support |
+|----------|---------|-------------|
+| **Wezterm** | `brew install --cask wezterm` | Native CLI |
 
-Wezterm is the only supported terminal (native tabs, MCP, start-one).
+Wezterm is the only supported terminal — native tabs, MCP integration, and `start-one` for crash recovery.
 
 ### Other Requirements
 
@@ -278,7 +280,8 @@ terminal:
   app: wezterm
 ```
 
-Keybindings:
+#### Wezterm keybindings
+
 - `Ctrl+Shift+T` - New tab
 - `Ctrl+Tab` / `Ctrl+Shift+Tab` - Switch tabs
 - `Ctrl+Shift+W` - Close tab

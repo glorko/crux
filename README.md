@@ -37,15 +37,13 @@ Crux spawns each service in its own terminal tab, giving you full interactive co
 
 ## Requirements
 
-### Terminal (choose one)
+### Terminal (Wezterm only)
 
-| Terminal | Install | Tab Support | Recommended |
-|----------|---------|-------------|-------------|
-| **Wezterm** | `brew install --cask wezterm` | Native CLI | **Yes** |
-| **Kitty** | `brew install --cask kitty` | Remote control | Yes |
-| **tmux** | `brew install tmux` | Multiplexer | Fallback |
+| Terminal | Install |
+|----------|---------|
+| **Wezterm** | `brew install --cask wezterm` |
 
-**Wezterm is recommended** - best CLI support for programmatic tab control.
+Wezterm is the only supported terminal (native tabs, MCP, start-one).
 
 ### Other Requirements
 
@@ -147,7 +145,7 @@ services:
     workdir: ./webapps/admin
 
 terminal:
-  app: wezterm  # Options: wezterm, kitty, tmux
+  app: wezterm  # wezterm is the only supported option
 ```
 
 > **Note:** For Flutter, you need device IDs not names:
@@ -275,20 +273,7 @@ services:
     args: ["run", "dev"]
     workdir: ./webapps/admin
 
-# Terminal application
-terminal:
-  app: wezterm  # wezterm (recommended), kitty, or tmux
-
-# Only used if terminal.app is tmux
-tmux:
-  session_name: crux
-```
-
-### Terminal Options
-
-#### Wezterm (Recommended)
-
-```yaml
+# Terminal (wezterm is the only supported option)
 terminal:
   app: wezterm
 ```
@@ -297,31 +282,6 @@ Keybindings:
 - `Ctrl+Shift+T` - New tab
 - `Ctrl+Tab` / `Ctrl+Shift+Tab` - Switch tabs
 - `Ctrl+Shift+W` - Close tab
-
-#### Kitty
-
-```yaml
-terminal:
-  app: kitty
-```
-
-Keybindings:
-- `Ctrl+Shift+T` - New tab
-- `Ctrl+Shift+Right/Left` - Switch tabs
-
-#### tmux (Fallback)
-
-```yaml
-terminal:
-  app: tmux
-
-tmux:
-  session_name: my-project
-```
-
-Opens Ghostty/iTerm2/Terminal with tmux attached. Keybindings:
-- `Ctrl+B` then `0/1/2` - Switch windows
-- `Ctrl+B` then `d` - Detach
 
 ## MCP Server (AI/LLM Integration)
 

@@ -5,8 +5,8 @@ backend:
   path: "../crucially-backend"
   start_script: "start-backend.sh"
   env:
-    DATABASE_URL: "postgres://postgres:postgres@localhost:5433/crucially?sslmode=disable"
-    REDIS_URL: "redis://localhost:6379"
+    DATABASE_URL: "postgres://postgres:postgres@localhost:5440/crucially?sslmode=disable"
+    REDIS_URL: "redis://localhost:6382"
     PORT: "50051"
 
 flutter:
@@ -22,10 +22,10 @@ flutter:
 dependencies:
   postgres:
     host: "localhost"
-    port: 5433
+    port: 5440
     database: "crucially"
     user: "postgres"
     password: "postgres"
   redis:
     host: "localhost"
-    port: 6379
+    port: 6382

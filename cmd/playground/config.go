@@ -28,9 +28,9 @@ type DependencyConfig struct {
 	Timeout int    `yaml:"timeout,omitempty"` // Seconds to wait for check to pass after start (default: 30)
 }
 
-// TerminalConfig defines the terminal app to use
+// TerminalConfig defines the terminal app (wezterm is the only supported option)
 type TerminalConfig struct {
-	App string `yaml:"app"` // ghostty, iterm2, terminal, wezterm, kitty
+	App string `yaml:"app"` // wezterm (only supported)
 }
 
 // ServiceConfig defines a service to run

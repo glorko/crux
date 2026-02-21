@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -138,24 +139,77 @@ func main() {
 		}
 	}
 
-	// Check terminal mode
-	terminalApp := cfg.Terminal.App
-	if terminalApp == "" {
-		terminalApp = "wezterm" // default to wezterm (best CLI support)
+	// Wezterm is the only supported terminal (native tabs, MCP, start-one).
+	if cfg.Terminal.App != "" && cfg.Terminal.App != "wezterm" {
+		fmt.Printf("⚠️  Only wezterm is supported; ignoring terminal.app=%q\n", cfg.Terminal.App)
 	}
-
-	fmt.Printf("✅ Terminal: %s\n", terminalApp)
+	fmt.Println("✅ Terminal: wezterm")
 	fmt.Println()
+	runWithWezterm(cfg)
+}
 
-	switch terminalApp {
-	case "wezterm":
-		runWithWezterm(cfg)
-	case "kitty":
-		runWithKitty(cfg)
-	default:
-		// Fallback to tmux mode for other terminals
-		runWithTmux(cfg)
+// exitCodeInLogRe matches "Exited with code N" in the wrapper log tail
+var exitCodeInLogRe = regexp.MustCompile(`Exited with code (\d+)`)
+
+// checkServiceFailures reads each service's latest.log (last 2KB) and returns names that exited non-zero.
+func checkServiceFailures(serviceNames []string) (failed []string) {
+	const tailBytes = 2048
+	for _, name := range serviceNames {
+		logPath := filepath.Join("/tmp/crux-logs", name, "latest.log")
+		data, err := os.ReadFile(logPath)
+		if err != nil {
+			continue // no log yet or missing
+		}
+		tail := data
+		if len(tail) > tailBytes {
+			tail = tail[len(tail)-tailBytes:]
+		}
+		matches := exitCodeInLogRe.FindSubmatch(tail)
+		if len(matches) < 2 {
+			continue
+		}
+		code, _ := strconv.Atoi(string(matches[1]))
+		if code != 0 {
+			failed = append(failed, name)
+		}
 	}
+	return failed
+}
+
+// printFailedServicesWarning prints a big, bright warning listing failed services and their tab numbers.
+func printFailedServicesWarning(serviceNames []string, failed []string) {
+	if len(failed) == 0 {
+		return
+	}
+	// Build tab number (1-based index in serviceNames) for each failed service
+	var tabNums []string
+	for _, f := range failed {
+		for i, n := range serviceNames {
+			if n == f {
+				tabNums = append(tabNums, strconv.Itoa(i+1))
+				break
+			}
+		}
+	}
+	tabList := strings.Join(tabNums, ", ")
+	failedList := strings.Join(failed, ", ")
+	// ANSI: bold, bright red background / white text for maximum visibility
+	const bold = "\033[1m"
+	const redBg = "\033[41m"
+	const white = "\033[37m"
+	const reset = "\033[0m"
+	fmt.Println()
+	fmt.Printf("%s%s%s", redBg, white, bold)
+	fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+	fmt.Println("║  ⚠️  WARNING: Your environment is started but some services FAILED with an error.  ║")
+	fmt.Println("║                                                                              ║")
+	fmt.Printf("║  Failed services: %-54s ║\n", failedList)
+	fmt.Printf("║  Check logs in tabs: %-52s ║\n", tabList)
+	fmt.Println("║                                                                              ║")
+	fmt.Println("║  Or run: crux_logfile service=<name>  to read the log from here.              ║")
+	fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+	fmt.Print(reset)
+	fmt.Println()
 }
 
 // runStartOne starts a single service in a new tab in the existing Wezterm window.
@@ -280,6 +334,19 @@ func runWithWezterm(cfg *PlaygroundConfig) {
 	fmt.Println("   Or just close this terminal - tabs stay running")
 	fmt.Println()
 
+	// After a short delay, check if any service already exited with error and warn loudly
+	go func() {
+		time.Sleep(15 * time.Second)
+		names := make([]string, len(cfg.Services))
+		for i := range cfg.Services {
+			names[i] = cfg.Services[i].Name
+		}
+		failed := checkServiceFailures(names)
+		if len(failed) > 0 {
+			printFailedServicesWarning(names, failed)
+		}
+	}()
+
 	// Handle Ctrl+C to cleanup
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -289,184 +356,6 @@ func runWithWezterm(cfg *PlaygroundConfig) {
 	fmt.Println("\n🛑 Shutting down...")
 	wez.Cleanup()
 	fmt.Println("✅ All tabs closed")
-}
-
-// runWithKitty uses native Kitty tabs with remote control
-func runWithKitty(cfg *PlaygroundConfig) {
-	// Check if kitty is available
-	if _, err := exec.LookPath("kitty"); err != nil {
-		fmt.Println("❌ kitty is not installed!")
-		fmt.Println("   Install from: https://sw.kovidgoyal.net/kitty/")
-		os.Exit(1)
-	}
-
-	fmt.Println("📺 Opening Kitty with service tabs...")
-
-	// Start kitty with remote control and first service
-	first := cfg.Services[0]
-	cmd := exec.Command("kitty",
-		"-o", "allow_remote_control=yes",
-		"--listen-on", "unix:/tmp/crux-kitty.sock",
-		"--title", first.Name,
-		first.Command,
-	)
-	cmd.Args = append(cmd.Args, first.ExpandArgs()...)
-	if err := cmd.Start(); err != nil {
-		fmt.Printf("❌ Failed to start kitty: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("  ✅ %s\n", first.Name)
-
-	// Wait for kitty to start
-	time.Sleep(500 * time.Millisecond)
-
-	// Spawn remaining services as tabs
-	for _, svc := range cfg.Services[1:] {
-		args := []string{
-			"@", "--to", "unix:/tmp/crux-kitty.sock",
-			"launch", "--type", "tab", "--title", svc.Name,
-			svc.Command,
-		}
-		args = append(args, svc.ExpandArgs()...)
-
-		tabCmd := exec.Command("kitty", args...)
-		if err := tabCmd.Run(); err != nil {
-			fmt.Printf("  ⚠️  %s: failed to create tab: %v\n", svc.Name, err)
-		} else {
-			fmt.Printf("  ✅ %s\n", svc.Name)
-		}
-	}
-
-	fmt.Println()
-	fmt.Println("✅ Services running in Kitty tabs!")
-	fmt.Println("   Ctrl+Shift+T = new tab")
-	fmt.Println("   Ctrl+Shift+Right/Left = switch tabs")
-	fmt.Println()
-}
-
-// runWithTmux uses tmux inside a terminal app
-func runWithTmux(cfg *PlaygroundConfig) {
-	sessionName := cfg.Tmux.SessionName
-	if sessionName == "" {
-		sessionName = "crux"
-	}
-
-	tmux := terminal.NewTmuxLauncher(sessionName)
-	if !tmux.IsAvailable() {
-		fmt.Println("❌ tmux is not installed!")
-		fmt.Println("   Install with: brew install tmux")
-		os.Exit(1)
-	}
-
-	// Create tmux session
-	if err := tmux.CreateSession(); err != nil {
-		fmt.Printf("❌ Failed to create tmux session: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("✅ Created tmux session: %s\n", tmux.SessionName())
-
-	workers := make([]*Worker, 0, len(cfg.Services))
-
-	// Cleanup function
-	cleanup := func() {
-		fmt.Println("\n🛑 Shutting down...")
-		for _, w := range workers {
-			sendCommand(w.PipePath, "q")
-			if w.PID > 0 {
-				syscall.Kill(w.PID, syscall.SIGTERM)
-			}
-		}
-		time.Sleep(500 * time.Millisecond)
-		tmux.KillSession()
-	}
-
-	// Handle signals
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
-	go func() {
-		<-sigChan
-		cleanup()
-		os.Exit(0)
-	}()
-
-	// Spawn workers
-	fmt.Println("Spawning services in tmux...")
-	for _, svc := range cfg.Services {
-		w := &Worker{
-			Name:     svc.Name,
-			PipePath: fmt.Sprintf("/tmp/crux-%s.pipe", svc.Name),
-			PIDFile:  fmt.Sprintf("/tmp/crux-%s.pid", svc.Name),
-		}
-		os.Remove(w.PipePath)
-		os.Remove(w.PIDFile)
-
-		if err := tmux.Spawn(svc.Name, svc.WorkDir, svc.Command, svc.ExpandArgs()); err != nil {
-			fmt.Printf("❌ Failed to spawn %s: %v\n", svc.Name, err)
-			cleanup()
-			os.Exit(1)
-		}
-		workers = append(workers, w)
-		fmt.Printf("  ✅ %s\n", svc.Name)
-	}
-
-	// Wait for PIDs
-	time.Sleep(2 * time.Second)
-	for _, w := range workers {
-		if pid, err := readPIDFile(w.PIDFile); err == nil {
-			w.PID = pid
-		}
-	}
-
-	// Start API server
-	apiServer := api.NewServer(cfg.API.Port)
-	apiWorkers := make([]api.Worker, len(workers))
-	for i, w := range workers {
-		apiWorkers[i] = w
-	}
-	apiServer.SetWorkers(apiWorkers)
-	apiServer.SetOnShutdown(func() {
-		cleanup()
-		os.Exit(0)
-	})
-	go apiServer.Start()
-
-	fmt.Printf("\n🌐 API: http://localhost:%d\n", cfg.API.Port)
-
-	// Open terminal with tmux
-	termApp := cfg.Terminal.App
-	if termApp == "" || termApp == "tmux" {
-		termApp = "ghostty" // default terminal for tmux mode
-	}
-
-	fmt.Printf("📺 Opening %s with tmux...\n", termApp)
-	openTerminalWithTmux(termApp, sessionName)
-
-	fmt.Println()
-	fmt.Println("✅ Services running in tmux: " + sessionName)
-	fmt.Println("   Reattach: tmux attach -t " + sessionName)
-	fmt.Println("   Stop all: tmux kill-session -t " + sessionName)
-}
-
-func openTerminalWithTmux(app string, sessionName string) error {
-	tmuxCmd := fmt.Sprintf("tmux attach -t %s", sessionName)
-
-	switch app {
-	case "ghostty":
-		cmd := exec.Command("open", "-na", "Ghostty", "--args", "-e", "/bin/sh", "-c", tmuxCmd)
-		return cmd.Start()
-	case "iterm", "iterm2":
-		script := fmt.Sprintf(`tell application "iTerm" to create window with default profile command "%s"`, tmuxCmd)
-		return exec.Command("osascript", "-e", script).Start()
-	case "terminal", "terminal.app":
-		script := fmt.Sprintf(`tell application "Terminal" to do script "%s"`, tmuxCmd)
-		return exec.Command("osascript", "-e", script).Start()
-	case "wezterm":
-		return exec.Command("wezterm", "start", "--", "/bin/sh", "-c", tmuxCmd).Start()
-	case "kitty":
-		return exec.Command("kitty", "/bin/sh", "-c", tmuxCmd).Start()
-	default:
-		return fmt.Errorf("unknown terminal: %s", app)
-	}
 }
 
 func readPIDFile(path string) (int, error) {

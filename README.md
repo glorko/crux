@@ -67,7 +67,7 @@ brew install --cask wezterm
 
 ```bash
 brew tap glorko/crux
-brew install crux
+brew install --HEAD glorko/crux/crux
 ```
 
 **Manual (build from source)**
@@ -523,7 +523,7 @@ cd ./backend && go run ./cmd/server
 
 ## Version
 
-Current version: **v0.8.0**
+Current version: **v0.9.0**
 
 ## License
 

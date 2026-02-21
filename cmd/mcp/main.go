@@ -126,7 +126,7 @@ func handleRequest(req Request) {
 		result := InitializeResult{
 			ProtocolVersion: "2024-11-05",
 			Capabilities:    ServerCapabilities{Tools: &ToolsCapability{}},
-			ServerInfo:      ServerInfo{Name: "crux-mcp", Version: "0.4.0"},
+			ServerInfo:      ServerInfo{Name: "crux-mcp", Version: "0.9.0"},
 		}
 		sendResult(req.ID, result)
 

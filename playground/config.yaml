@@ -1,0 +1,23 @@
+# Playground: run from this folder with: crux
+# Uses backend-mock and flutter-mock (r=hot reload, R=restart, s=status, q=quit)
+services:
+  - name: backend
+    command: go
+    args: ["run", "./cmd/playground/backend-mock", "backend"]
+    workdir: ..
+
+  - name: flutter-ios
+    command: go
+    args: ["run", "./cmd/playground/flutter-mock", "flutter-ios", "iPhone 15 Pro"]
+    workdir: ..
+
+  - name: flutter-android
+    command: go
+    args: ["run", "./cmd/playground/flutter-mock", "flutter-android", "emulator-5554"]
+    workdir: ..
+
+terminal:
+  app: wezterm
+
+api:
+  port: 9876

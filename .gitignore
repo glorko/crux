@@ -1,6 +1,7 @@
-# Binaries
+# Binaries (built executables only; playground/ is the test dir, tracked)
 crux
 playground
+!playground/
 *.exe
 *.exe~
 *.dll

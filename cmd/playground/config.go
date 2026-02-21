@@ -75,9 +75,13 @@ func LoadPlaygroundConfig(configPath string) (*PlaygroundConfig, error) {
 		cfg.Tmux.SessionName = "crux"
 	}
 
-	// Resolve command paths
+	configDir := filepath.Dir(configPath)
+
 	for i := range cfg.Services {
 		cfg.Services[i].Command = resolveCommand(cfg.Services[i].Command)
+		if cfg.Services[i].WorkDir != "" && !filepath.IsAbs(cfg.Services[i].WorkDir) {
+			cfg.Services[i].WorkDir = filepath.Join(configDir, cfg.Services[i].WorkDir)
+		}
 	}
 
 	return &cfg, nil

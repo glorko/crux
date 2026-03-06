@@ -21,4 +21,6 @@ type TabController interface {
 	Focus(service string) error
 	// SpawnTab starts a new tab in the current session (e.g. after a service crashed)
 	SpawnTab(title, workDir, command string, args []string) error
+	// KillTab closes/kills a tab by service name (e.g. so the process exits and the pane is removed)
+	KillTab(service string) error
 }

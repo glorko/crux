@@ -74,6 +74,30 @@ func (w *WeztermLauncher) Cleanup() {
 	os.Remove(cruxPanesFile)
 }
 
+// KillPane kills a single pane by ID and removes it from tracked state (servicePanes, paneIDs).
+func (w *WeztermLauncher) KillPane(paneID string) error {
+	cmd := exec.Command("wezterm", "cli", "kill-pane", "--pane-id", paneID)
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	// Remove from servicePanes (find service name that maps to this paneID)
+	for svc, id := range w.servicePanes {
+		if id == paneID {
+			delete(w.servicePanes, svc)
+			break
+		}
+	}
+	// Remove from paneIDs slice
+	newPaneIDs := make([]string, 0, len(w.paneIDs))
+	for _, id := range w.paneIDs {
+		if id != paneID {
+			newPaneIDs = append(newPaneIDs, id)
+		}
+	}
+	w.paneIDs = newPaneIDs
+	return nil
+}
+
 // Keep for potential future use
 var _ = filepath.Join
 var _ = bufio.NewReader

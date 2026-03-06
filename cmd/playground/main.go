@@ -16,7 +16,7 @@ import (
 	"github.com/glorko/crux/internal/terminal"
 )
 
-const version = "0.9.0"
+const version = "0.10.0"
 
 // Worker represents a spawned worker process
 type Worker struct {

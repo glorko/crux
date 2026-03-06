@@ -67,6 +67,14 @@ func (c *weztermTabController) SpawnTab(title, workDir, command string, args []s
 	return err
 }
 
+func (c *weztermTabController) KillTab(service string) error {
+	paneID := c.resolvePane(service)
+	if paneID == "" {
+		return fmt.Errorf("service %q not found", service)
+	}
+	return c.launcher.KillPane(paneID)
+}
+
 func (c *weztermTabController) resolvePane(service string) string {
 	// Try stored map first (fast path)
 	if id := c.launcher.GetServicePane(service); id != "" {

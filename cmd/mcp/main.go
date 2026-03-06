@@ -126,7 +126,7 @@ func handleRequest(req Request) {
 		result := InitializeResult{
 			ProtocolVersion: "2024-11-05",
 			Capabilities:    ServerCapabilities{Tools: &ToolsCapability{}},
-			ServerInfo:      ServerInfo{Name: "crux-mcp", Version: "0.9.0"},
+			ServerInfo:      ServerInfo{Name: "crux-mcp", Version: "0.10.0"},
 		}
 		sendResult(req.ID, result)
 
@@ -142,7 +142,7 @@ func handleRequest(req Request) {
 			},
 			{
 				Name:        "crux_send",
-				Description: "Send text to a tab (e.g. 'r'=reload, 'R'=restart, 'q'=quit)",
+				Description: "Send text/keystroke to a tab (e.g. r/R for Flutter hot reload, q=quit). Technology-dependent: Flutter supports r/R; other stacks may not.",
 				InputSchema: InputSchema{
 					Type: "object",
 					Properties: map[string]Property{
@@ -179,6 +179,24 @@ func handleRequest(req Request) {
 				InputSchema: InputSchema{
 					Type:       "object",
 					Properties: map[string]Property{"service": {Type: "string", Description: "Service name from config (e.g. backend, flutter-ios)"}},
+					Required:   []string{"service"},
+				},
+			},
+			{
+				Name:        "crux_kill",
+				Description: "Kill/stop a single running service tab. Use when you need to stop a service without restarting it (e.g. to rebuild a Go backend).",
+				InputSchema: InputSchema{
+					Type:       "object",
+					Properties: map[string]Property{"service": {Type: "string", Description: "Service name from config (e.g. backend, app1_ios)"}},
+					Required:   []string{"service"},
+				},
+			},
+			{
+				Name:        "crux_reload",
+				Description: "Full reload: kill the tab and start the service again (kill + start_one). Use for applying migrations, config changes, or when hot reload is not supported (e.g. Go backend). For Flutter hot reload use crux_send with text 'r'.",
+				InputSchema: InputSchema{
+					Type:       "object",
+					Properties: map[string]Property{"service": {Type: "string", Description: "Service name from config (e.g. backend, app1_ios)"}},
 					Required:   []string{"service"},
 				},
 			},
@@ -237,6 +255,12 @@ func handleToolCall(id interface{}, params CallToolParams) {
 	case "crux_start_one":
 		service, _ := args["service"].(string)
 		result, isError = apiStartOne(service)
+	case "crux_kill":
+		service, _ := args["service"].(string)
+		result, isError = apiKill(service)
+	case "crux_reload":
+		service, _ := args["service"].(string)
+		result, isError = apiReload(service)
 	case "crux_logfile":
 		service, _ := args["service"].(string)
 		run, _ := args["run"].(string)
@@ -409,6 +433,46 @@ func apiStartOne(service string) (string, bool) {
 		return "Failed: " + out.Message, true
 	}
 	return out.Message, false
+}
+
+func apiKill(service string) (string, bool) {
+	if service == "" {
+		return "Service name required", true
+	}
+	data, err := apiPost("/stop/"+service, nil)
+	if err != nil {
+		return "Failed: " + err.Error(), true
+	}
+	var out struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(data), &out); err != nil {
+		return data, false
+	}
+	if !out.Success {
+		return "Failed: " + out.Message, true
+	}
+	return out.Message, false
+}
+
+func apiReload(service string) (string, bool) {
+	if service == "" {
+		return "Service name required", true
+	}
+	// Full reload = kill tab then start one
+	killMsg, killErr := apiKill(service)
+	startMsg, startErr := apiStartOne(service)
+	if startErr {
+		if killErr {
+			return "Kill: " + killMsg + "; start failed: " + startMsg, true
+		}
+		return "Start failed: " + startMsg, true
+	}
+	if killErr {
+		return "Reloaded " + service + " (kill had issues: " + killMsg + "). " + startMsg, false
+	}
+	return "Reloaded " + service + ": " + startMsg, false
 }
 
 func apiLogfile(service, run, lines string) (string, bool) {

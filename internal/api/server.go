@@ -620,23 +620,36 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.RUnlock()
 
 	worker := s.findWorker(service)
-	if worker == nil {
-		http.Error(w, fmt.Sprintf("Service '%s' not found", service), http.StatusNotFound)
+	if worker != nil {
+		err := worker.SendCommand("q")
+		resp := CommandResponse{
+			Success: err == nil,
+			Service: service,
+			Message: "Stop command sent",
+		}
+		if err != nil {
+			resp.Message = fmt.Sprintf("Error: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 		return
 	}
-
-	err := worker.SendCommand("q")
-	resp := CommandResponse{
-		Success: err == nil,
-		Service: service,
-		Message: "Stop command sent",
+	// Tab mode: use tab controller to kill the pane
+	if s.tabCtrl != nil {
+		err := s.tabCtrl.KillTab(service)
+		resp := CommandResponse{
+			Success: err == nil,
+			Service: service,
+			Message: "Tab closed",
+		}
+		if err != nil {
+			resp.Message = err.Error()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
 	}
-	if err != nil {
-		resp.Message = fmt.Sprintf("Error: %v", err)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	http.Error(w, fmt.Sprintf("Service '%s' not found", service), http.StatusNotFound)
 }
 
 func (s *Server) findWorker(name string) Worker {

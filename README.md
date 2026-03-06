@@ -284,10 +284,12 @@ The MCP server lets AI assistants:
 | Tool | Description |
 |------|-------------|
 | `crux_status` | List all terminal tabs with their numbers and titles |
-| `crux_send` | Send text/commands to a tab (e.g., `r` for hot reload, `R` for restart, `q` for quit) |
+| `crux_send` | Send text/keystroke to a tab (e.g. `r`/`R` for Flutter hot reload, `q` for quit). Technology-dependent. |
 | `crux_logs` | Get terminal scrollback from a tab (last N lines) |
 | `crux_focus` | Focus/activate a specific tab in Wezterm |
-| `crux_start_one` | Start a single service (new tab, or new window in some cases). Use when a service crashed |
+| `crux_start_one` | Start a single service (new tab). Use when a service crashed. |
+| `crux_kill` | Kill/close a service tab (stops the process and closes the tab). |
+| `crux_reload` | Full reload: kill the tab and start the service again (kill + start_one). Use for migrations, config changes, or when hot reload is not supported (e.g. Go backend). For Flutter use `crux_send` with `r`. |
 | `crux_logfile` | Read log files for crashed/closed tabs. Each run creates timestamped log in `/tmp/crux-logs/<service>/` |
 
 ### Tool Parameters
@@ -306,7 +308,12 @@ The MCP server lets AI assistants:
 **crux_start_one**
 - `service` - Service name from config (e.g. "backend", "frontend")
 - May open a new tab in same window, or a new window, depending on session state
-- Note: May open a new Wezterm window depending on session state; new tab in same window when possible
+
+**crux_kill**
+- `service` - Service name from config (e.g. "backend", "app1_ios"). Closes that tab and stops the process.
+
+**crux_reload**
+- `service` - Service name from config. Does full restart: kill tab then start one (for migrations, config changes, or stacks that don't support hot reload).
 
 **crux_logfile**
 - `service` - Service name (e.g., "backend") or "list" to show all services with logs
@@ -354,7 +361,7 @@ Ask Cursor:
 - "Send hot-reload to the frontend tab" (sends "r" to that tab)
 - "Show me the backend logs" (uses crux_logs for live output)
 - "Focus the backend tab" (activates tab in Wezterm)
-- "Restart the backend" (uses crux_start_one to spawn in new tab)
+- "Restart the backend" (use crux_reload for full restart, or crux_kill then crux_start_one; for Flutter hot reload use crux_send with "r")
 - "The backend crashed, what happened?" (uses crux_logfile for crash logs)
 - "What services have logs?" (crux_logfile with service="list")
 - "Show me previous backend runs" (crux_logfile with service="backend", run="list")
@@ -395,6 +402,52 @@ Ask Cursor:
 1. `crux` reads `config.yaml`, spawns Wezterm tabs, and runs an HTTP API server
 2. `crux-mcp` talks to crux's API only (no direct wezterm access)
 3. Cursor calls MCP tools → crux-mcp → crux API → wezterm
+
+## HTTP API
+
+You can use the crux HTTP API directly (scripts, CI, or without MCP). The API is available only while `crux` is running.
+
+**Base URL:** `http://localhost:9876` by default. Configure the port in `config.yaml`:
+
+```yaml
+api:
+  port: 9876
+```
+
+For MCP, set `CRUX_API_URL` (e.g. `export CRUX_API_URL=http://localhost:9876`) if your crux API runs on a different host or port.
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/tabs` | List tabs (name, log path, uptime) |
+| GET | `/status` | Orchestrator status and workers (worker mode) |
+| GET | `/health` | Health check |
+| POST | `/send/<service>` | Send text to a tab. Body: `{"text": "r"}` (e.g. `r`=hot reload, `R`=restart, `q`=quit) |
+| POST | `/stop/<service>` | Kill/close that tab |
+| POST | `/stop` | Shutdown crux (close all tabs) |
+| POST | `/start-one/<service>` | Start one service in a new tab |
+| GET | `/logs/<service>?lines=50` | Live scrollback from tab (default 50 lines) |
+| GET | `/logfile/<service>?run=latest&lines=100` | Read log file (crashed/closed tabs) |
+| POST | `/focus/<service>` | Focus that tab in Wezterm |
+| POST | `/reload`, `/reload/<service>` | Worker mode only: send `r` to workers |
+| POST | `/restart`, `/restart/<service>` | Worker mode only: send `R` to workers |
+
+### Example: use API instead of MCP
+
+```bash
+# List tabs
+curl -s http://localhost:9876/tabs
+
+# Send hot-reload to backend tab (e.g. Flutter)
+curl -X POST http://localhost:9876/send/backend -H "Content-Type: application/json" -d '{"text":"r"}'
+
+# Stop a service tab
+curl -X POST http://localhost:9876/stop/backend
+
+# Start one service (e.g. after it crashed)
+curl -X POST http://localhost:9876/start-one/backend
+```
 
 ## Examples
 
@@ -519,7 +572,7 @@ cd ./backend && go run ./cmd/server
 
 ## Version
 
-Current version: **v0.9.0**
+Current version: **v0.10.0**
 
 ## License
 

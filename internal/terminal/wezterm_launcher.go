@@ -115,7 +115,7 @@ func (w *WeztermLauncher) IsAvailable() bool {
 
 // Spawn implements TerminalLauncher interface - spawns a new tab
 func (w *WeztermLauncher) Spawn(name string, workDir string, command string, args []string) error {
-	_, err := w.SpawnTab(name, workDir, command, args)
+	_, err := w.SpawnTab(name, workDir, command, args, false)
 	return err
 }
 
@@ -132,10 +132,10 @@ func wrapCommand(name string, command string, args []string) (string, []string) 
 			fullCmd += " " + arg
 		}
 	}
-	
+
 	// Log directory structure: /tmp/crux-logs/<service>/
 	logDir := fmt.Sprintf("/tmp/crux-logs/%s", name)
-	
+
 	// Wrapper script:
 	// 1. Create log directory
 	// 2. Create timestamped log file
@@ -174,25 +174,33 @@ if [ $EXIT_CODE -ne 0 ]; then
   read
 fi
 `, logDir, name, fullCmd, fullCmd)
-	
+
 	return "/bin/bash", []string{"-c", wrapper}
+}
+
+// prepareSpawnCommand returns the effective command for a service mode.
+// Interactive services run directly in the terminal TTY with no wrapper.
+func prepareSpawnCommand(title string, command string, args []string, interactive bool) (string, []string) {
+	if interactive {
+		return command, args
+	}
+	return wrapCommand(title, command, args)
 }
 
 // OpenWindow opens a new Wezterm window with a command
 // Uses 'wezterm start' which launches the GUI
-func (w *WeztermLauncher) OpenWindow(title string, workDir string, command string, args []string) (string, error) {
-	// Wrap command to log and keep open on failure
-	wrappedCmd, wrappedArgs := wrapCommand(title, command, args)
-	
+func (w *WeztermLauncher) OpenWindow(title string, workDir string, command string, args []string, interactive bool) (string, error) {
+	spawnCmd, spawnArgs := prepareSpawnCommand(title, command, args, interactive)
+
 	cmdArgs := []string{"start"}
-	
+
 	if workDir != "" {
 		cmdArgs = append(cmdArgs, "--cwd", workDir)
 	}
-	
+
 	cmdArgs = append(cmdArgs, "--")
-	cmdArgs = append(cmdArgs, wrappedCmd)
-	cmdArgs = append(cmdArgs, wrappedArgs...)
+	cmdArgs = append(cmdArgs, spawnCmd)
+	cmdArgs = append(cmdArgs, spawnArgs...)
 
 	cmd := exec.Command("wezterm", cmdArgs...)
 	err := cmd.Start()
@@ -202,7 +210,7 @@ func (w *WeztermLauncher) OpenWindow(title string, workDir string, command strin
 
 	// Wait for wezterm to start and create its socket
 	time.Sleep(1500 * time.Millisecond)
-	
+
 	// Get pane + window ID from our NEW window (wezterm start just created it).
 	// Use LAST entry - our new window is typically last in the list.
 	// Using "first" can pick a pane from an existing window (e.g. where user ran crux).
@@ -305,15 +313,15 @@ func GetFirstPaneID() (string, error) {
 }
 
 // SpawnTabInWindow spawns a new tab in a specific window. Prefer over SpawnTabInPane when we know the window.
-func SpawnTabInWindow(windowID string, title string, workDir string, command string, args []string) (string, error) {
-	wrappedCmd, wrappedArgs := wrapCommand(title, command, args)
+func SpawnTabInWindow(windowID string, title string, workDir string, command string, args []string, interactive bool) (string, error) {
+	spawnCmd, spawnArgs := prepareSpawnCommand(title, command, args, interactive)
 	cmdArgs := []string{"cli", "spawn", "--window-id", windowID}
 	if workDir != "" {
 		cmdArgs = append(cmdArgs, "--cwd", workDir)
 	}
 	cmdArgs = append(cmdArgs, "--")
-	cmdArgs = append(cmdArgs, wrappedCmd)
-	cmdArgs = append(cmdArgs, wrappedArgs...)
+	cmdArgs = append(cmdArgs, spawnCmd)
+	cmdArgs = append(cmdArgs, spawnArgs...)
 
 	var lastErr error
 	for attempt := 0; attempt < 5; attempt++ {
@@ -332,15 +340,15 @@ func SpawnTabInWindow(windowID string, title string, workDir string, command str
 
 // SpawnTabInPane spawns a new tab in an existing Wezterm window by pane ID.
 // Use GetFirstPaneID() to get a pane when attaching to the current window.
-func SpawnTabInPane(anchorPaneID string, title string, workDir string, command string, args []string) (string, error) {
-	wrappedCmd, wrappedArgs := wrapCommand(title, command, args)
+func SpawnTabInPane(anchorPaneID string, title string, workDir string, command string, args []string, interactive bool) (string, error) {
+	spawnCmd, spawnArgs := prepareSpawnCommand(title, command, args, interactive)
 	cmdArgs := []string{"cli", "spawn", "--pane-id", anchorPaneID}
 	if workDir != "" {
 		cmdArgs = append(cmdArgs, "--cwd", workDir)
 	}
 	cmdArgs = append(cmdArgs, "--")
-	cmdArgs = append(cmdArgs, wrappedCmd)
-	cmdArgs = append(cmdArgs, wrappedArgs...)
+	cmdArgs = append(cmdArgs, spawnCmd)
+	cmdArgs = append(cmdArgs, spawnArgs...)
 
 	var lastErr error
 	for attempt := 0; attempt < 5; attempt++ {
@@ -358,16 +366,16 @@ func SpawnTabInPane(anchorPaneID string, title string, workDir string, command s
 }
 
 // SpawnTab spawns a new tab in the existing Wezterm window
-func (w *WeztermLauncher) SpawnTab(title string, workDir string, command string, args []string) (string, error) {
+func (w *WeztermLauncher) SpawnTab(title string, workDir string, command string, args []string, interactive bool) (string, error) {
 	if w.firstPaneID == "" && w.firstWindowID == "" {
 		return "", fmt.Errorf("no anchor pane (start crux normally first, or use crux start-one with wezterm already open)")
 	}
 	var newPaneID string
 	var err error
 	if w.firstWindowID != "" && w.firstWindowID != "0" {
-		newPaneID, err = SpawnTabInWindow(w.firstWindowID, title, workDir, command, args)
+		newPaneID, err = SpawnTabInWindow(w.firstWindowID, title, workDir, command, args, interactive)
 	} else {
-		newPaneID, err = SpawnTabInPane(w.firstPaneID, title, workDir, command, args)
+		newPaneID, err = SpawnTabInPane(w.firstPaneID, title, workDir, command, args, interactive)
 	}
 	if err != nil {
 		return "", err
@@ -428,9 +436,9 @@ func (w *WeztermLauncher) ListPanesWithTitles() ([]PaneInfo, error) {
 		return nil, err
 	}
 	var entries []struct {
-		PaneID    int    `json:"pane_id"`
-		Title     string `json:"title"`      // pane title (e.g. bash)
-		TabTitle  string `json:"tab_title"`  // tab title (service name from set-tab-title)
+		PaneID   int    `json:"pane_id"`
+		Title    string `json:"title"`     // pane title (e.g. bash)
+		TabTitle string `json:"tab_title"` // tab title (service name from set-tab-title)
 	}
 	if err := json.Unmarshal(output, &entries); err != nil {
 		return nil, err
@@ -482,12 +490,16 @@ func (w *WeztermLauncher) StartWithTabs(services []ServiceDef) error {
 	if workDir == "" {
 		workDir = cwd
 	}
-	
-	paneID, err := w.OpenWindow(first.Name, workDir, first.Command, first.Args)
+
+	paneID, err := w.OpenWindow(first.Name, workDir, first.Command, first.Args, first.Interactive)
 	if err != nil {
 		return fmt.Errorf("failed to open window for %s: %w", first.Name, err)
 	}
-	fmt.Printf("  ✅ %s (pane %s)\n", first.Name, paneID)
+	firstState := "running"
+	if first.Interactive {
+		firstState = "interactive_running"
+	}
+	fmt.Printf("  ✅ %s (%s, pane %s)\n", first.Name, firstState, paneID)
 
 	// Remaining services open as tabs
 	for _, svc := range services[1:] {
@@ -495,12 +507,16 @@ func (w *WeztermLauncher) StartWithTabs(services []ServiceDef) error {
 		if workDir == "" {
 			workDir = cwd
 		}
-		
-		paneID, err := w.SpawnTab(svc.Name, workDir, svc.Command, svc.Args)
+
+		paneID, err := w.SpawnTab(svc.Name, workDir, svc.Command, svc.Args, svc.Interactive)
 		if err != nil {
 			return fmt.Errorf("failed to spawn tab for %s: %w", svc.Name, err)
 		}
-		fmt.Printf("  ✅ %s (pane %s)\n", svc.Name, paneID)
+		state := "running"
+		if svc.Interactive {
+			state = "interactive_running"
+		}
+		fmt.Printf("  ✅ %s (%s, pane %s)\n", svc.Name, state, paneID)
 	}
 
 	// Activate the window
@@ -511,8 +527,9 @@ func (w *WeztermLauncher) StartWithTabs(services []ServiceDef) error {
 
 // ServiceDef defines a service to spawn
 type ServiceDef struct {
-	Name    string
-	Command string
-	Args    []string
-	WorkDir string
+	Name        string
+	Command     string
+	Args        []string
+	WorkDir     string
+	Interactive bool
 }

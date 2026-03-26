@@ -63,7 +63,7 @@ func (c *weztermTabController) Focus(service string) error {
 }
 
 func (c *weztermTabController) SpawnTab(title, workDir, command string, args []string) error {
-	_, err := c.launcher.SpawnTab(title, workDir, command, args)
+	_, err := c.launcher.SpawnTab(title, workDir, command, args, false)
 	return err
 }
 

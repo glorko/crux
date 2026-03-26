@@ -5,14 +5,24 @@ services:
   - name: backend
     command: crux-backend-mock
     args: ["backend", "50051"]
+    interactive: false
     
   - name: flutter-ios
     command: crux-flutter-mock
     args: ["flutter-ios", "iPhone 15 Pro"]
+    interactive: false
     
   - name: flutter-android
     command: crux-flutter-mock
     args: ["flutter-android", "Pixel 9a"]
+    interactive: false
+
+  # Mixed mode example: interactive prompt-driven service
+  - name: shopify-store-a
+    command: npm
+    args: ["run", "dev", "--", "--store", "cashasa-dev-store.myshopify.com"]
+    workdir: ./cashasa-app/cashasa
+    interactive: true
 
 # Terminal app to use for tabs
 # Options: wezterm (best), kitty, tmux (fallback with ghostty/iterm2/terminal)

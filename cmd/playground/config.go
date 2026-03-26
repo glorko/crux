@@ -39,6 +39,8 @@ type ServiceConfig struct {
 	Command string   `yaml:"command"`
 	Args    []string `yaml:"args"`
 	WorkDir string   `yaml:"workdir,omitempty"`
+	// Interactive launches service directly in terminal TTY without wrapper/log piping.
+	Interactive bool `yaml:"interactive,omitempty"`
 }
 
 // APIConfig defines the API server configuration
@@ -144,7 +146,11 @@ func (c *PlaygroundConfig) String() string {
 	sb.WriteString(fmt.Sprintf("  Tmux Session: %s\n", c.Tmux.SessionName))
 	sb.WriteString("  Services:\n")
 	for _, svc := range c.Services {
-		sb.WriteString(fmt.Sprintf("    - %s: %s %v\n", svc.Name, svc.Command, svc.Args))
+		mode := ""
+		if svc.Interactive {
+			mode = " (interactive)"
+		}
+		sb.WriteString(fmt.Sprintf("    - %s%s: %s %v\n", svc.Name, mode, svc.Command, svc.Args))
 	}
 	return sb.String()
 }

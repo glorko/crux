@@ -129,11 +129,18 @@ services:
     command: npm
     args: ["run", "dev"]
     workdir: ./frontend
+    interactive: false
 
   - name: worker
     command: python
     args: ["-m", "worker"]
     workdir: ./worker
+
+  - name: shopify-store-a
+    command: npm
+    args: ["run", "dev", "--", "--store", "cashasa-dev-store.myshopify.com"]
+    workdir: ./cashasa-app/cashasa
+    interactive: true
 
 terminal:
   app: wezterm
@@ -246,20 +253,35 @@ services:
     command: go
     args: ["run", "./cmd/server"]
     workdir: ./backend
+    interactive: false
 
   - name: frontend
     command: npm
     args: ["run", "dev"]
     workdir: ./frontend
+    interactive: false
 
   - name: worker
     command: python
     args: ["-m", "worker"]
     workdir: ./worker
+    interactive: false
+
+  - name: shopify-store-b
+    command: npm
+    args: ["run", "dev", "--", "--store", "cashasa-second-store.myshopify.com"]
+    workdir: ./cashasa-app/cashasa
+    interactive: true
 
 terminal:
   app: wezterm
 ```
+
+`interactive` is optional and defaults to `false`.
+- `interactive: false` (default): crux wraps output, captures logs in `/tmp/crux-logs`, and applies strict startup failure scanning.
+- `interactive: true`: crux launches the command directly in a real terminal TTY (no pipe/redirection wrapper), so password/auth/confirmation prompts work.
+
+Use interactive mode for CLIs that need direct user input in terminal tabs (for example Shopify CLI asking for store password or auth confirmation).
 
 #### Wezterm keybindings
 
@@ -538,6 +560,18 @@ terminal:
 - **iOS:** Get UUID with `xcrun simctl list devices` (e.g. `90266925-B62F-4741-A89E-EF11BFA0CC57`).
 - **Android:** Start the emulator first (e.g. `emulator -avd Pixel_9a`), then get the ID from `flutter devices` (e.g. `emulator-5554`).
 
+### Interactive mode limitations (`interactive: true`)
+
+When a service is marked `interactive: true`, crux launches it directly in a real terminal TTY and intentionally skips the non-interactive wrapper/log piping.
+
+This is required for prompt-driven CLIs (Shopify password/auth prompts), but it has tradeoffs:
+- Startup checks are best-effort for interactive services (not strict wrapper log-based exit checks).
+- If an interactive process exits early, crux warns but does not treat it as a dependency boot failure.
+- Crux does not auto-answer prompts and does not emulate TTY over pipes.
+- Crux does not currently auto-restart interactive services; restart manually with `crux start-one <service>`.
+
+For mixed setups, keep backend/workers as default non-interactive services and set `interactive: true` only for services that require direct terminal input.
+
 ## Troubleshooting
 
 ### Wezterm not found
@@ -560,6 +594,27 @@ Check the command works manually:
 
 ```bash
 cd ./backend && go run ./cmd/server
+```
+
+### Prompt failed in non-interactive environment
+
+If a service prints errors like `Failed to prompt` or hangs waiting for password input, mark that service as interactive:
+
+```yaml
+services:
+  - name: cashasa-app-store-a
+    command: npm
+    args: ["run", "dev", "--", "--store", "cashasa-dev-store.myshopify.com"]
+    workdir: ./cashasa-app/cashasa
+    interactive: true
+```
+
+Then rerun `crux` and complete prompts in that service tab.
+
+If the interactive tab exits after a prompt/auth attempt, inspect the tab output, fix the underlying issue (credentials/auth/network), and restart it with:
+
+```bash
+crux start-one cashasa-app-store-a
 ```
 
 ### MCP not connecting

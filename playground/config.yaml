@@ -5,16 +5,25 @@ services:
     command: go
     args: ["run", "./cmd/playground/backend-mock", "backend"]
     workdir: ..
+    interactive: false
 
   - name: flutter-ios
     command: go
     args: ["run", "./cmd/playground/flutter-mock", "flutter-ios", "iPhone 15 Pro"]
     workdir: ..
+    interactive: false
 
   - name: flutter-android
     command: go
     args: ["run", "./cmd/playground/flutter-mock", "flutter-android", "emulator-5554"]
     workdir: ..
+    interactive: false
+
+  - name: shopify-store-a
+    command: npm
+    args: ["run", "dev", "--", "--store", "cashasa-dev-store.myshopify.com"]
+    workdir: ../cashasa-app/cashasa
+    interactive: true
 
 terminal:
   app: wezterm

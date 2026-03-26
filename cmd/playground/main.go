@@ -115,14 +115,14 @@ func main() {
 	// Validate service commands exist
 	for _, svc := range cfg.Services {
 		cmdPath := svc.Command
-		
+
 		// If command is a relative path (./something), resolve relative to workdir
 		if strings.HasPrefix(cmdPath, "./") || strings.HasPrefix(cmdPath, "../") {
 			if svc.WorkDir != "" {
 				cmdPath = filepath.Join(svc.WorkDir, svc.Command)
 			}
 		}
-		
+
 		// Check if it's a file path
 		if strings.Contains(cmdPath, "/") {
 			if _, err := os.Stat(cmdPath); os.IsNotExist(err) {
@@ -174,6 +174,26 @@ func checkServiceFailures(serviceNames []string) (failed []string) {
 		}
 	}
 	return failed
+}
+
+func collectInteractiveServiceNames(services []ServiceConfig) []string {
+	var names []string
+	for _, svc := range services {
+		if svc.Interactive {
+			names = append(names, svc.Name)
+		}
+	}
+	return names
+}
+
+func collectNonInteractiveServiceNames(services []ServiceConfig) []string {
+	var names []string
+	for _, svc := range services {
+		if !svc.Interactive {
+			names = append(names, svc.Name)
+		}
+	}
+	return names
 }
 
 // printFailedServicesWarning prints a big, bright warning listing failed services and their tab numbers.
@@ -239,7 +259,7 @@ func runStartOne(cfg *PlaygroundConfig, configPath string, serviceName string) e
 	// Only wezterm supports spawning into existing window via CLI
 	wez := terminal.NewWeztermLauncher()
 	if !wez.IsAvailable() {
-		return fmt.Errorf("start-one requires wezterm (install from https://wezterm.org/)")
+		return fmt.Errorf("start-one requires wezterm (install with: brew install --cask wezterm)")
 	}
 
 	paneID, err := terminal.GetFirstPaneID()
@@ -247,12 +267,16 @@ func runStartOne(cfg *PlaygroundConfig, configPath string, serviceName string) e
 		return fmt.Errorf("no Wezterm window open: %w (open Wezterm and run crux, or start the crashed tab manually)", err)
 	}
 
-	_, err = terminal.SpawnTabInPane(paneID, svc.Name, workDir, svc.Command, svc.ExpandArgs())
+	_, err = terminal.SpawnTabInPane(paneID, svc.Name, workDir, svc.Command, svc.ExpandArgs(), svc.Interactive)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("  ✅ %s started in new tab\n", svc.Name)
+	if svc.Interactive {
+		fmt.Printf("  ✅ %s started in new interactive tab\n", svc.Name)
+	} else {
+		fmt.Printf("  ✅ %s started in new tab\n", svc.Name)
+	}
 	wez.ActivateWindow()
 	return nil
 }
@@ -260,9 +284,17 @@ func runStartOne(cfg *PlaygroundConfig, configPath string, serviceName string) e
 // runWithWezterm uses native Wezterm tabs (no tmux needed)
 func runWithWezterm(cfg *PlaygroundConfig) {
 	wez := terminal.NewWeztermLauncher()
+	interactiveServices := collectInteractiveServiceNames(cfg.Services)
 	if !wez.IsAvailable() {
-		fmt.Println("❌ wezterm is not installed!")
-		fmt.Println("   Install from: https://wezterm.org/")
+		if len(interactiveServices) > 0 {
+			fmt.Println("❌ wezterm is required for interactive services but is not installed!")
+			fmt.Printf("   Interactive services: %s\n", strings.Join(interactiveServices, ", "))
+			fmt.Println("   Install with: brew install --cask wezterm")
+			fmt.Println("   Then re-run crux with the same config.")
+		} else {
+			fmt.Println("❌ wezterm is not installed!")
+			fmt.Println("   Install with: brew install --cask wezterm")
+		}
 		os.Exit(1)
 	}
 
@@ -276,10 +308,11 @@ func runWithWezterm(cfg *PlaygroundConfig) {
 	services := make([]terminal.ServiceDef, len(cfg.Services))
 	for i, svc := range cfg.Services {
 		services[i] = terminal.ServiceDef{
-			Name:    svc.Name,
-			Command: svc.Command,
-			Args:    svc.ExpandArgs(),
-			WorkDir: svc.WorkDir,
+			Name:        svc.Name,
+			Command:     svc.Command,
+			Args:        svc.ExpandArgs(),
+			WorkDir:     svc.WorkDir,
+			Interactive: svc.Interactive,
 		}
 	}
 
@@ -315,7 +348,7 @@ func runWithWezterm(cfg *PlaygroundConfig) {
 		if workDir == "" {
 			workDir = cwd
 		}
-		if err := tc.SpawnTab(svc.Name, workDir, svc.Command, svc.ExpandArgs()); err != nil {
+		if _, err := wez.SpawnTab(svc.Name, workDir, svc.Command, svc.ExpandArgs(), svc.Interactive); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Started %s in new tab", svc.Name), nil
@@ -328,6 +361,10 @@ func runWithWezterm(cfg *PlaygroundConfig) {
 
 	fmt.Println()
 	fmt.Println("✅ Services running in Wezterm tabs!")
+	if len(interactiveServices) > 0 {
+		fmt.Printf("   Interactive services: %s\n", strings.Join(interactiveServices, ", "))
+		fmt.Println("   This service is interactive; complete prompts in its terminal tab.")
+	}
 	fmt.Printf("\n🌐 API: http://localhost:%d (MCP uses this)\n", cfg.API.Port)
 	fmt.Println()
 	fmt.Println("   Ctrl+C here = close all tabs and exit")
@@ -337,13 +374,15 @@ func runWithWezterm(cfg *PlaygroundConfig) {
 	// After a short delay, check if any service already exited with error and warn loudly
 	go func() {
 		time.Sleep(15 * time.Second)
-		names := make([]string, len(cfg.Services))
-		for i := range cfg.Services {
-			names[i] = cfg.Services[i].Name
-		}
+		names := collectNonInteractiveServiceNames(cfg.Services)
 		failed := checkServiceFailures(names)
 		if len(failed) > 0 {
 			printFailedServicesWarning(names, failed)
+		}
+		if len(interactiveServices) > 0 {
+			fmt.Println()
+			fmt.Printf("⚠️  Interactive services are best-effort during bootstrap: %s\n", strings.Join(interactiveServices, ", "))
+			fmt.Println("   If one exits, inspect its tab and restart it after completing prompts.")
 		}
 	}()
 
@@ -437,6 +476,10 @@ RIGHT: command: ./scripts/start-backend.sh  workdir: ./
 WRONG: guessing "react-native run" for a React Native app
 RIGHT: command: npm  args: ["run", "ios"]  (or whatever package.json "scripts" actually defines)
 
+If a service may ask for password/auth/confirmation prompts (for example Shopify CLI), set:
+  interactive: true
+This runs it in a real terminal TTY tab without non-interactive wrapper piping.
+
 Identify:
 - Backend services (Go, Python, Node.js, etc.) - and which script starts each
 - Mobile apps (Flutter, React Native) - and their actual run commands from package.json/scripts
@@ -489,6 +532,7 @@ Create a config.yaml using the ACTUAL commands you found (from scripts, Makefile
   - package.json: command: npm  args: ["run", "dev"]  (use the exact script name)
   - React Native: command: npm  args: ["run", "ios"]  (or "run:ios", whatever package.json has)
 - Working directories relative to config.yaml (where the script/command runs from)
+- For prompt-driven CLIs (Shopify, auth/password prompts), set interactive: true
 - terminal.app set to wezterm
 
 Run: crux --help
@@ -595,6 +639,7 @@ CONFIGURATION:
         command: go             # Executable to run
         args: ["run", "./cmd/server"]  # Command arguments (optional)
         workdir: ./backend      # Working directory (optional, relative to config)
+        interactive: false      # Optional (default false). Set true for prompt-driven CLIs.
 
       - name: flutter-ios
         command: flutter
@@ -629,6 +674,13 @@ EXAMPLES:
     - name: admin-web
       command: npm
       args: ["run", "dev"]
+
+    # Interactive CLI (Shopify, auth/password prompts)
+    - name: shopify-store-a
+      command: npm
+      args: ["run", "dev", "--", "--store", "cashasa-dev-store.myshopify.com"]
+      workdir: ./cashasa-app/cashasa
+      interactive: true
 
     # Docker
     - name: postgres
@@ -707,6 +759,7 @@ services:
     command: go
     args: ["run", "./cmd/server"]
     # workdir: ./backend  # optional working directory
+    # interactive: false  # optional; defaults to false
 
   # Flutter iOS example (get UUID: xcrun simctl list devices)
   # - name: flutter-ios
@@ -724,6 +777,13 @@ services:
   #   command: npm
   #   args: ["run", "dev"]
   #   workdir: ./webapps/admin
+
+  # Interactive CLI example (Shopify/auth/password prompts)
+  # - name: cashasa-app-store-a
+  #   command: npm
+  #   args: ["run", "dev", "--", "--store", "cashasa-dev-store.myshopify.com"]
+  #   workdir: ./cashasa-app/cashasa
+  #   interactive: true
 
 # Terminal to use for tabs
 terminal:

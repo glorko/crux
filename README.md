@@ -78,6 +78,8 @@ cd crux
 
 Manual install puts `crux` and `crux-mcp` in `~/bin` and adds it to your shell PATH.
 
+**Crucially workspace:** In the multi-repo Crucially layout, run `crux` from the workspace root with `config.yaml`. A heavily commented reference for that file lives in the `crucially-metadata` repo as `docs/crux_workspace_config.yaml`.
+
 ### 3. MCP (Cursor)
 
 In `~/.cursor/mcp.json` add crux under `mcpServers`. Use the path for your platform (see table). Restart Cursor after changing.

@@ -78,7 +78,7 @@ cd crux
 
 Manual install puts `crux` and `crux-mcp` in `~/bin` and adds it to your shell PATH.
 
-**Crucially workspace:** In the multi-repo Crucially layout, run `crux` from the workspace root with `config.yaml`. A heavily commented reference for that file lives in the `crucially-metadata` repo as `docs/crux_workspace_config.yaml`.
+**Crucially workspace:** In the multi-repo Crucially layout, run `crux` from the workspace root (default `config.yaml` = staging mobile only; `crux -c config-local.yaml` for full local backend). A heavily commented reference lives in `crucially-metadata` as `docs/crux_workspace_config.yaml`.
 
 ### 3. MCP (Cursor)
 
